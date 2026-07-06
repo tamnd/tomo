@@ -196,12 +196,16 @@ func (d *Discord) onMessage(ctx context.Context, data json.RawMessage) {
 	}
 	in := channel.Inbound{Chat: m.ChannelID, User: m.Author.ID, Text: m.Content}
 	for _, att := range m.Attachments {
-		if !strings.HasPrefix(att.ContentType, "image/") {
-			continue
-		}
 		// Discord attachment URLs are public CDN links, no auth needed.
-		if img, err := channel.FetchImage(ctx, http.DefaultClient, att.URL, nil); err == nil {
-			in.Images = append(in.Images, img)
+		switch {
+		case strings.HasPrefix(att.ContentType, "image/"):
+			if img, err := channel.FetchImage(ctx, http.DefaultClient, att.URL, nil); err == nil {
+				in.Images = append(in.Images, img)
+			}
+		case strings.HasPrefix(att.ContentType, "audio/"):
+			if clip, err := channel.FetchAudio(ctx, http.DefaultClient, att.URL, nil); err == nil {
+				in.Audio = append(in.Audio, clip)
+			}
 		}
 	}
 	reply := &dcReply{d: d, ctx: ctx, channelID: m.ChannelID}

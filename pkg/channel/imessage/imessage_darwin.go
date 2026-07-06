@@ -121,7 +121,7 @@ func (m *IMessage) onMessage(ctx context.Context, msg imsg) {
 	}
 	reply := &imReply{m: m, ctx: ctx, handle: msg.Handle}
 	x := channel.Exchange{
-		In:       channel.Inbound{Chat: msg.Handle, User: msg.Handle, Text: msg.Text, Images: msg.Images},
+		In:       channel.Inbound{Chat: msg.Handle, User: msg.Handle, Text: msg.Text, Images: msg.Images, Audio: msg.Audio},
 		Reply:    reply,
 		Approver: &imApprover{m: m, ctx: ctx, handle: msg.Handle},
 	}
@@ -196,6 +196,7 @@ type imsg struct {
 	Handle string
 	Text   string
 	Images []provider.Block
+	Audio  []channel.Clip
 }
 
 func maxRowID(ctx context.Context, db *sql.DB) (int64, error) {
@@ -242,10 +243,11 @@ func poll(ctx context.Context, db *sql.DB, after int64) ([]imsg, int64, error) {
 	for _, msg := range seen {
 		// Attachments are best effort: a missing table or unreadable file
 		// leaves the message as text-only rather than dropping the turn.
-		if imgs, err := attachments(ctx, db, msg.RowID); err == nil {
+		if imgs, audio, err := attachments(ctx, db, msg.RowID); err == nil {
 			msg.Images = imgs
+			msg.Audio = audio
 		}
-		if msg.Text == "" && len(msg.Images) == 0 {
+		if msg.Text == "" && len(msg.Images) == 0 && len(msg.Audio) == 0 {
 			continue
 		}
 		out = append(out, msg)
@@ -253,31 +255,39 @@ func poll(ctx context.Context, db *sql.DB, after int64) ([]imsg, int64, error) {
 	return out, last, nil
 }
 
-// attachments returns the image attachments on a message as model-ready blocks.
-// Non-image files are ignored; iMessage keeps each attachment as a file on disk
-// under the user's home, so this reads them straight off the filesystem.
-func attachments(ctx context.Context, db *sql.DB, msgID int64) ([]provider.Block, error) {
+// attachments returns the image and audio attachments on a message. Other file
+// types are ignored. iMessage keeps each attachment as a file on disk under the
+// user's home, so this reads them straight off the filesystem.
+func attachments(ctx context.Context, db *sql.DB, msgID int64) ([]provider.Block, []channel.Clip, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT a.filename, COALESCE(a.mime_type, '')
 		FROM attachment a
 		JOIN message_attachment_join maj ON maj.attachment_id = a.ROWID
 		WHERE maj.message_id = ?`, msgID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
-	var out []provider.Block
+	var imgs []provider.Block
+	var audio []channel.Clip
 	for rows.Next() {
 		var path, mime string
 		if err := rows.Scan(&path, &mime); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if img, err := channel.ReadImageFile(expandHome(path), mime); err == nil {
-			out = append(out, img)
+		switch {
+		case strings.HasPrefix(mime, "audio/"):
+			if clip, err := channel.ReadAudioFile(expandHome(path)); err == nil {
+				audio = append(audio, clip)
+			}
+		default:
+			if img, err := channel.ReadImageFile(expandHome(path), mime); err == nil {
+				imgs = append(imgs, img)
+			}
 		}
 	}
-	return out, rows.Err()
+	return imgs, audio, rows.Err()
 }
 
 // expandHome resolves a leading ~ the way chat.db records attachment paths.

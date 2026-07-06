@@ -173,3 +173,36 @@ func TestDispatchCaptionBecomesText(t *testing.T) {
 		t.Fatal("handler never ran")
 	}
 }
+
+func TestDispatchVoiceBecomesAudio(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "getFile") {
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"file_path":"voice/note.oga"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "audio/ogg")
+		_, _ = w.Write([]byte("OggS-voice"))
+	}))
+	defer srv.Close()
+
+	tg := &Telegram{Token: "x", BaseURL: srv.URL, Client: srv.Client(), Allow: []int64{42}}
+	got := make(chan channel.Inbound, 1)
+	tg.handler = func(_ context.Context, x channel.Exchange) { got <- x.In }
+
+	u := update{Message: &message{Voice: &audioFile{FileID: "v1", MimeType: "audio/ogg"}}}
+	u.Message.Chat.ID = 42
+	u.Message.From.ID = 7
+	tg.dispatch(context.Background(), u)
+
+	select {
+	case in := <-got:
+		if len(in.Audio) != 1 {
+			t.Fatalf("audio clips = %d, want 1", len(in.Audio))
+		}
+		if in.Audio[0].Ext != ".ogg" {
+			t.Errorf("ext = %q, want .ogg", in.Audio[0].Ext)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never ran")
+	}
+}

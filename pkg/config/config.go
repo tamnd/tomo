@@ -34,7 +34,17 @@ type Config struct {
 	Policy       Policy              `yaml:"policy"`
 	Channels     Channels            `yaml:"channels"`
 	Heartbeat    Heartbeat           `yaml:"heartbeat"`
+	Voice        Voice               `yaml:"voice"`
 	DataDir      string              `yaml:"data_dir"`
+}
+
+// Voice configures inbound speech transcription with whisper.cpp. It is off
+// until a model path is set. Voice notes are then transcribed locally, so no
+// audio leaves the machine.
+type Voice struct {
+	Model  string `yaml:"model"`  // path to a ggml whisper model; setting it enables voice-in
+	Bin    string `yaml:"bin"`    // whisper.cpp cli, defaults to whisper-cli
+	FFmpeg string `yaml:"ffmpeg"` // decoder for non-wav clips, defaults to ffmpeg
 }
 
 // Heartbeat runs tomo on a cadence against a checklist file, so it can pick up

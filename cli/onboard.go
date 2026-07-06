@@ -77,6 +77,14 @@ channels:
 #   file: ~/.tomo/HEARTBEAT.md
 #   channel: telegram
 #   chat: "123456789"
+
+# Voice notes are transcribed on this machine with whisper.cpp, so no audio
+# leaves the box. Set a model path to turn it on; bin and ffmpeg default to
+# whisper-cli and ffmpeg on PATH. ffmpeg decodes non-wav clips (most are).
+# voice:
+#   model: ~/.tomo/models/ggml-base.en.bin
+#   bin: whisper-cli
+#   ffmpeg: ffmpeg
 `
 
 func newOnboardCmd() *cobra.Command {

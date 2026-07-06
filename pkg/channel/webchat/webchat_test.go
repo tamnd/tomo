@@ -124,3 +124,21 @@ func TestServeIndexServesPage(t *testing.T) {
 		t.Error("index page does not mention tomo")
 	}
 }
+
+func TestServeChatAttachesAudio(t *testing.T) {
+	clip := "data:audio/webm;base64," + "d2VibS12b2ljZQ==" // "webm-voice"
+
+	w := &WebChat{}
+	var clips int
+	w.handler = func(_ context.Context, x channel.Exchange) {
+		clips = len(x.In.Audio)
+		x.Reply.Done()
+	}
+	body := `{"session":"s1","text":"","audio":["` + clip + `"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+	w.serveChat(httptest.NewRecorder(), req)
+
+	if clips != 1 {
+		t.Errorf("audio clips = %d, want 1", clips)
+	}
+}

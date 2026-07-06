@@ -108,7 +108,7 @@ func (t *Telegram) dispatch(ctx context.Context, u update) {
 	switch {
 	case u.CallbackQuery != nil:
 		t.resolveCallback(ctx, u.CallbackQuery)
-	case u.Message != nil && (u.Message.Text != "" || len(u.Message.Photo) > 0):
+	case u.Message != nil && u.Message.hasContent():
 		m := u.Message
 		chatID := m.Chat.ID
 		if !t.allowed(chatID) {
@@ -127,6 +127,11 @@ func (t *Telegram) dispatch(ctx context.Context, u update) {
 			// The last size is the largest; send that to the model.
 			if img, err := t.fetchPhoto(ctx, m.Photo[len(m.Photo)-1].FileID); err == nil {
 				in.Images = append(in.Images, img)
+			}
+		}
+		if ref := m.audio(); ref != nil {
+			if clip, err := t.fetchAudio(ctx, ref.FileID, ref.MimeType); err == nil {
+				in.Audio = append(in.Audio, clip)
 			}
 		}
 		reply := &tgReply{tg: t, ctx: ctx, chatID: chatID}
@@ -150,6 +155,18 @@ func (t *Telegram) fetchPhoto(ctx context.Context, fileID string) (provider.Bloc
 	}
 	url := t.baseURL() + "/file/bot" + t.Token + "/" + path
 	return channel.FetchImage(ctx, t.client(), url, nil)
+}
+
+// fetchAudio resolves a voice or audio file id and pulls the clip down for
+// transcription. Telegram's file path carries a known extension (.oga for a
+// voice note), which is enough for the transcriber to decode it.
+func (t *Telegram) fetchAudio(ctx context.Context, fileID, _ string) (channel.Clip, error) {
+	path, err := t.filePath(ctx, fileID)
+	if err != nil {
+		return channel.Clip{}, err
+	}
+	url := t.baseURL() + "/file/bot" + t.Token + "/" + path
+	return channel.FetchAudio(ctx, t.client(), url, nil)
 }
 
 // filePath calls getFile to turn a file id into the server-side path the file
@@ -267,6 +284,8 @@ type message struct {
 	Text    string      `json:"text"`
 	Caption string      `json:"caption"`
 	Photo   []photoSize `json:"photo"`
+	Voice   *audioFile  `json:"voice"`
+	Audio   *audioFile  `json:"audio"`
 	Chat    struct {
 		ID int64 `json:"id"`
 	} `json:"chat"`
@@ -275,10 +294,30 @@ type message struct {
 	} `json:"from"`
 }
 
+// hasContent reports whether a message carries anything worth a turn.
+func (m *message) hasContent() bool {
+	return m.Text != "" || len(m.Photo) > 0 || m.audio() != nil
+}
+
+// audio returns the voice note or audio file on the message, preferring a
+// voice note, or nil if there is neither.
+func (m *message) audio() *audioFile {
+	if m.Voice != nil {
+		return m.Voice
+	}
+	return m.Audio
+}
+
 // photoSize is one rendition of a photo. Telegram sends several; the last is
 // the largest.
 type photoSize struct {
 	FileID string `json:"file_id"`
+}
+
+// audioFile is a voice note or music file. mime_type tells us the container.
+type audioFile struct {
+	FileID   string `json:"file_id"`
+	MimeType string `json:"mime_type"`
 }
 
 type callbackQuery struct {

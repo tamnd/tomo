@@ -116,6 +116,77 @@ func TestDecodeDataURL(t *testing.T) {
 	}
 }
 
+func TestFetchAudioDownloadsClip(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
+			t.Errorf("auth header not forwarded, got %q", got)
+		}
+		w.Header().Set("Content-Type", "audio/ogg")
+		_, _ = w.Write([]byte("OggS-fake-voice"))
+	}))
+	defer srv.Close()
+
+	clip, err := FetchAudio(context.Background(), srv.Client(), srv.URL, http.Header{"Authorization": {"Bearer tok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clip.Ext != ".ogg" {
+		t.Errorf("ext = %q, want .ogg", clip.Ext)
+	}
+	if string(clip.Data) != "OggS-fake-voice" {
+		t.Errorf("data = %q", clip.Data)
+	}
+}
+
+func TestReadAudioFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "note.m4a")
+	if err := os.WriteFile(path, []byte("m4a-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clip, err := ReadAudioFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clip.Ext != ".m4a" || string(clip.Data) != "m4a-bytes" {
+		t.Errorf("clip = %+v", clip)
+	}
+}
+
+func TestDecodeAudioDataURL(t *testing.T) {
+	url := "data:audio/webm;base64," + base64.StdEncoding.EncodeToString([]byte("webm"))
+	clip, err := DecodeAudioDataURL(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clip.Ext != ".webm" || string(clip.Data) != "webm" {
+		t.Errorf("clip = %+v", clip)
+	}
+
+	for _, bad := range []string{
+		"data:image/png;base64,aGk=",
+		"http://x/y.ogg",
+		"data:audio/ogg,notbase64",
+	} {
+		if _, err := DecodeAudioDataURL(bad); err == nil {
+			t.Errorf("DecodeAudioDataURL(%q) should have failed", bad)
+		}
+	}
+}
+
+func TestAudioExtOf(t *testing.T) {
+	cases := []struct{ ct, url, want string }{
+		{"audio/ogg", "x", ".ogg"},
+		{"audio/mp4; codecs=mp4a", "y", ".m4a"},
+		{"", "https://h/voice/file_5.oga?x=1", ".oga"},
+		{"application/octet-stream", "clip.CAF", ".caf"},
+	}
+	for _, c := range cases {
+		if got := audioExtOf(c.ct, c.url); got != c.want {
+			t.Errorf("audioExtOf(%q,%q) = %q, want %q", c.ct, c.url, got, c.want)
+		}
+	}
+}
+
 func TestNormalizeImageType(t *testing.T) {
 	cases := []struct{ ct, url, want string }{
 		{"image/jpeg; charset=binary", "x", "image/jpeg"},
