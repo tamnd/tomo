@@ -39,12 +39,19 @@ type Config struct {
 // Channels configures the front doors serve turns on.
 type Channels struct {
 	Telegram Telegram `yaml:"telegram"`
+	Discord  Discord  `yaml:"discord"`
 }
 
 // Telegram holds the bot token and the chats allowed to reach it.
 type Telegram struct {
 	Token      string  `yaml:"token"`
 	AllowChats []int64 `yaml:"allow_chats"`
+}
+
+// Discord holds the bot token and the channel ids allowed to reach it.
+type Discord struct {
+	Token         string   `yaml:"token"`
+	AllowChannels []string `yaml:"allow_channels"`
 }
 
 // Policy mirrors the policy section without depending on pkg/policy.

@@ -15,3 +15,4 @@ linters:
         - (*database/sql.Tx).Rollback
         - (*github.com/tamnd/tomo/pkg/store.Store).Close
         - (*github.com/tamnd/tomo/pkg/policy.FileAuditor).Close
+        - (*github.com/coder/websocket.Conn).Close
