@@ -104,11 +104,11 @@ homebrew_casks:
     repository:
       owner: tamnd
       name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
     homepage: https://github.com/tamnd/tomo
     description: Your personal AI agent, one Go binary
-    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     commit_author:
       name: Duc-Tam Nguyen
       email: tamnd87@gmail.com
@@ -119,11 +119,11 @@ scoops:
     repository:
       owner: tamnd
       name: scoop-bucket
-      token: '{{ envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "" }}'
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
     homepage: https://github.com/tamnd/tomo
     description: Your personal AI agent, one Go binary
     license: MIT
-    skip_upload: '{{ if envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
+    skip_upload: '{{ if .Env.SCOOP_BUCKET_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     commit_author:
       name: Duc-Tam Nguyen
       email: tamnd87@gmail.com
