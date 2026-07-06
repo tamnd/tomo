@@ -10,6 +10,7 @@ import (
 
 	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/channel"
+	"github.com/tamnd/tomo/pkg/channel/discord"
 	"github.com/tamnd/tomo/pkg/channel/telegram"
 	"github.com/tamnd/tomo/pkg/channel/webchat"
 	"github.com/tamnd/tomo/pkg/policy"
@@ -58,6 +59,9 @@ func newServeCmd() *cobra.Command {
 			channels := []channel.Channel{&webchat.WebChat{Addr: addr}}
 			if tg := cfg.Channels.Telegram; tg.Token != "" {
 				channels = append(channels, &telegram.Telegram{Token: tg.Token, Allow: tg.AllowChats})
+			}
+			if dc := cfg.Channels.Discord; dc.Token != "" {
+				channels = append(channels, &discord.Discord{Token: dc.Token, Allow: dc.AllowChannels})
 			}
 
 			out := cmd.OutOrStdout()
