@@ -10,3 +10,7 @@ linters:
         - fmt.Fprintf
         - fmt.Fprintln
         - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*github.com/tamnd/tomo/pkg/store.Store).Close

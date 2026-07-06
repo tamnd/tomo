@@ -6,56 +6,101 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tamnd/tomo/pkg/agent"
+	"github.com/tamnd/tomo/pkg/config"
+	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/provider"
+	"github.com/tamnd/tomo/pkg/store"
+	"github.com/tamnd/tomo/pkg/tool"
 )
 
 func newChatCmd() *cobra.Command {
-	var model string
+	var model, session string
 	cmd := &cobra.Command{
 		Use:   "chat",
 		Short: "Talk to tomo from the terminal",
 		Long: "A streaming REPL against the configured model.\n" +
-			"/new starts a fresh conversation, /exit leaves (so does Ctrl-D).",
+			"With --session the conversation persists in the ledger and picks up\n" +
+			"where it left off. /new clears the working context, /exit leaves.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(cmd)
 			if err != nil {
 				return err
 			}
-			name, modelID, pc, err := cfg.Resolve(model)
+			a, label, err := buildAgent(cfg, model)
 			if err != nil {
 				return err
 			}
-			p, err := provider.Build(pc)
-			if err != nil {
-				return fmt.Errorf("provider %s: %w", name, err)
+
+			var history []provider.Message
+			var persist func([]provider.Message) error
+			if session != "" {
+				st, err := store.Open(filepath.Join(cfg.DataDir, "tomo.db"))
+				if err != nil {
+					return err
+				}
+				defer st.Close()
+				sess, err := st.Session(session, "terminal")
+				if err != nil {
+					return err
+				}
+				history, err = st.Messages(sess.ID)
+				if err != nil {
+					return err
+				}
+				persist = func(msgs []provider.Message) error { return st.Append(sess.ID, msgs) }
+				label += " · session " + session
 			}
-			a := &agent.Agent{
-				Provider:  p,
-				Model:     modelID,
-				System:    agent.SystemPrompt(time.Now(), ""),
-				MaxTokens: cfg.Agent.MaxTokens,
-				MaxTurns:  cfg.Agent.MaxTurns,
-			}
-			return runREPL(cmd, a, name+"/"+modelID)
+			return runREPL(cmd, a, label, history, persist)
 		},
 	}
 	cmd.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
+	cmd.Flags().StringVarP(&session, "session", "s", "", "named session to continue in the ledger")
 	return cmd
 }
 
-func runREPL(cmd *cobra.Command, a *agent.Agent, label string) error {
+// buildAgent assembles the provider, memory, and toolset shared by every
+// front end.
+func buildAgent(cfg *config.Config, model string) (*agent.Agent, string, error) {
+	name, modelID, pc, err := cfg.Resolve(model)
+	if err != nil {
+		return nil, "", err
+	}
+	p, err := provider.Build(pc)
+	if err != nil {
+		return nil, "", fmt.Errorf("provider %s: %w", name, err)
+	}
+	mem := &memory.Memory{Dir: filepath.Join(cfg.DataDir, "memory")}
+	index, err := mem.Index()
+	if err != nil {
+		return nil, "", err
+	}
+	a := &agent.Agent{
+		Provider:  p,
+		Model:     modelID,
+		System:    agent.SystemPrompt(time.Now(), index),
+		Tools:     tool.NewRegistry(mem.Tools()...),
+		MaxTokens: cfg.Agent.MaxTokens,
+		MaxTurns:  cfg.Agent.MaxTurns,
+	}
+	return a, name + "/" + modelID, nil
+}
+
+func runREPL(cmd *cobra.Command, a *agent.Agent, label string, history []provider.Message, persist func([]provider.Message) error) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "tomo · %s · /new starts over, /exit leaves\n", label)
+	if len(history) > 0 {
+		fmt.Fprintf(out, "continuing with %d messages of history\n", len(history))
+	}
 
-	var history []provider.Message
 	sink := &termSink{out: out}
 	in := bufio.NewScanner(os.Stdin)
 	for {
@@ -72,13 +117,18 @@ func runREPL(cmd *cobra.Command, a *agent.Agent, label string) error {
 			return nil
 		case "/new":
 			history = nil
-			fmt.Fprintln(out, "fresh conversation")
+			fmt.Fprintln(out, "fresh context (the ledger keeps the past)")
 			continue
 		}
 
 		fmt.Fprint(out, "\ntomo> ")
 		turn, err := a.Turn(ctx, history, provider.UserText(line), sink)
 		history = append(history, turn...)
+		if persist != nil {
+			if perr := persist(turn); perr != nil {
+				fmt.Fprintf(out, "\nledger write failed: %v\n", perr)
+			}
+		}
 		fmt.Fprintln(out)
 		if err != nil {
 			if errors.Is(err, ctx.Err()) {
