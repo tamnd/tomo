@@ -41,6 +41,7 @@ type Channels struct {
 	Telegram Telegram `yaml:"telegram"`
 	Discord  Discord  `yaml:"discord"`
 	Slack    Slack    `yaml:"slack"`
+	IMessage IMessage `yaml:"imessage"`
 }
 
 // Telegram holds the bot token and the chats allowed to reach it.
@@ -61,6 +62,15 @@ type Slack struct {
 	AppToken      string   `yaml:"app_token"`
 	BotToken      string   `yaml:"bot_token"`
 	AllowChannels []string `yaml:"allow_channels"`
+}
+
+// IMessage configures the macOS iMessage channel. It is off unless enabled,
+// since it reaches a real Messages account. AllowHandles lists the phone
+// numbers or emails permitted to drive the agent.
+type IMessage struct {
+	Enabled      bool     `yaml:"enabled"`
+	AllowHandles []string `yaml:"allow_handles"`
+	DBPath       string   `yaml:"db_path"`
 }
 
 // Policy mirrors the policy section without depending on pkg/policy.
