@@ -20,12 +20,24 @@ type Sink interface {
 	ToolEnd(name, result string, isErr bool)
 }
 
+// Gate is the policy check the loop consults before and after every tool run.
+// A nil Gate means allow everything, which is only appropriate for tests.
+type Gate interface {
+	// Allow decides whether a call may run, blocking for approval if needed.
+	// When it returns false the reason is fed back to the model as the tool
+	// result, so a refusal becomes something the model can work around.
+	Allow(ctx context.Context, name string, class tool.Class, input json.RawMessage) (bool, string)
+	// Ingested is called after a tool ran so the gate can track taint.
+	Ingested(class tool.Class, isErr bool)
+}
+
 // Agent binds a provider, a toolset, and the loop knobs.
 type Agent struct {
 	Provider  provider.Provider
 	Model     string
 	System    string
 	Tools     *tool.Registry
+	Gate      Gate
 	MaxTokens int
 	MaxTurns  int
 }
@@ -89,9 +101,20 @@ func (a *Agent) runTool(ctx context.Context, b provider.Block, sink Sink) (resul
 	if sink != nil {
 		sink.ToolStart(b.Name, b.Input)
 	}
+	if a.Gate != nil {
+		if allowed, reason := a.Gate.Allow(ctx, t.Name, t.Class, b.Input); !allowed {
+			if sink != nil {
+				sink.ToolEnd(b.Name, reason, true)
+			}
+			return reason, true
+		}
+	}
 	out, err := t.Run(ctx, b.Input)
 	if err != nil {
 		out, isErr = err.Error(), true
+	}
+	if a.Gate != nil {
+		a.Gate.Ingested(t.Class, isErr)
 	}
 	if len(out) > maxToolResult {
 		out = out[:maxToolResult] + "\n[truncated]"
