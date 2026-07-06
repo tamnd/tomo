@@ -66,6 +66,23 @@ type VoiceReply interface {
 	Voice(clip Clip)
 }
 
+// Attachment is a file the agent made for the user: an image, a chart, a
+// screenshot, a document. It rides the send_file tool back out.
+type Attachment struct {
+	Name    string // suggested filename, like "chart.png"
+	Mime    string // media type, like "image/png"
+	Data    []byte // the file bytes
+	Caption string // optional note to show alongside it
+}
+
+// FileReply is an optional capability a Reply may implement: it can deliver a
+// file the agent produced. A channel that cannot carry files leaves it
+// unimplemented, and the send_file tool tells the agent where the file is
+// instead.
+type FileReply interface {
+	File(a Attachment)
+}
+
 // Exchange bundles one inbound message with the channel-side handles the
 // router needs to answer it.
 type Exchange struct {

@@ -31,6 +31,7 @@
   button.mic.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .msg .body img { max-width:280px; border:1px solid var(--line); border-radius:8px; margin-top:6px; display:block; }
   .msg .body audio { margin-top:8px; display:block; width:280px; }
+  .msg .body a.clip { display:inline-block; margin-top:6px; padding:4px 10px; border:1px solid var(--line); border-radius:6px; color:var(--accent); text-decoration:none; }
 </style>
 </head>
 <body>
@@ -126,6 +127,19 @@ function playAudio(ev, where) {
   el.play().catch(() => {}); // autoplay may be blocked; the controls still work
   window.scrollTo(0, document.body.scrollHeight);
 }
+function showFile(ev, where) {
+  const url = 'data:' + ev.mime + ';base64,' + ev.data;
+  const box = where || log;
+  if (ev.mime.startsWith('image/')) {
+    const img = document.createElement('img'); img.src = url; img.alt = ev.name;
+    box.appendChild(img);
+  } else {
+    const a = document.createElement('a'); a.href = url; a.download = ev.name;
+    a.textContent = '📎 ' + ev.name; a.className = 'clip'; box.appendChild(a);
+  }
+  if (ev.caption) { const c = document.createElement('div'); c.className = 'notice'; c.textContent = ev.caption; box.appendChild(c); }
+  window.scrollTo(0, document.body.scrollHeight);
+}
 function approval(ev) {
   const box = document.createElement('div'); box.className='approval';
   box.innerHTML = '<div>tomo wants to run <b>'+ev.tool+'</b> ['+ev.class+']</div>' +
@@ -171,6 +185,7 @@ form.onsubmit = async (e) => {
       else if (ev.type==='notice') notice(ev.text);
       else if (ev.type==='approval') approval(ev);
       else if (ev.type==='audio') playAudio(ev, body);
+      else if (ev.type==='file') showFile(ev, body);
     }
   }
 };

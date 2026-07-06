@@ -173,6 +173,17 @@ func (s *sseReply) Voice(clip channel.Clip) {
 	})
 }
 
+// File sends a produced file as a file event; the page shows an image inline
+// and anything else as a download link.
+func (s *sseReply) File(a channel.Attachment) {
+	s.event("file", map[string]any{
+		"name":    a.Name,
+		"mime":    a.Mime,
+		"caption": a.Caption,
+		"data":    base64.StdEncoding.EncodeToString(a.Data),
+	})
+}
+
 // mimeForExt maps a clip extension to the media type the browser needs on the
 // data URL. Voice notes are opus in an ogg container by default.
 func mimeForExt(ext string) string {

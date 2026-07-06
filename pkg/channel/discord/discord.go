@@ -317,7 +317,12 @@ func (r *dcReply) Done() {
 
 // Voice sends a spoken reply as an audio attachment.
 func (r *dcReply) Voice(clip channel.Clip) {
-	_ = r.d.uploadFile(r.ctx, r.channelID, "reply"+clip.Ext, clip.Data)
+	_ = r.d.uploadFile(r.ctx, r.channelID, "reply"+clip.Ext, clip.Data, "")
+}
+
+// File sends a produced file as a message attachment.
+func (r *dcReply) File(a channel.Attachment) {
+	_ = r.d.uploadFile(r.ctx, r.channelID, a.Name, a.Data, a.Caption)
 }
 
 // dcApprover posts Allow/Deny buttons and waits for the click.
@@ -425,11 +430,20 @@ func (d *Discord) sendMessage(ctx context.Context, channelID string, body map[st
 }
 
 // uploadFile posts a file to a channel as a message attachment, which is how a
-// spoken reply reaches Discord since it has no dedicated voice-note type.
-func (d *Discord) uploadFile(ctx context.Context, channelID, filename string, data []byte) error {
+// spoken reply or a produced file reaches Discord. An optional caption rides
+// along as the message content.
+func (d *Discord) uploadFile(ctx context.Context, channelID, filename string, data []byte, caption string) error {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	if err := mw.WriteField("payload_json", `{"attachments":[{"id":0,"filename":"`+filename+`"}]}`); err != nil {
+	payload := map[string]any{"attachments": []any{map[string]any{"id": 0, "filename": filename}}}
+	if caption != "" {
+		payload["content"] = caption
+	}
+	pj, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if err := mw.WriteField("payload_json", string(pj)); err != nil {
 		return err
 	}
 	fw, err := mw.CreateFormFile("files[0]", filename)
