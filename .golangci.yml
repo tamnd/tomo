@@ -1,0 +1,12 @@
+# Defaults plus a short errcheck exclude list: terminal prints and response
+# body closes have no useful error to handle.
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
