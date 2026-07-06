@@ -35,7 +35,21 @@ type Config struct {
 	Channels     Channels            `yaml:"channels"`
 	Heartbeat    Heartbeat           `yaml:"heartbeat"`
 	Voice        Voice               `yaml:"voice"`
+	MCP          MCP                 `yaml:"mcp"`
 	DataDir      string              `yaml:"data_dir"`
+}
+
+// MCP lists the Model Context Protocol servers to attach on startup. Each one
+// contributes its tools, namespaced by the server key.
+type MCP struct {
+	Servers map[string]MCPServer `yaml:"servers"`
+}
+
+// MCPServer describes how to launch one stdio MCP server.
+type MCPServer struct {
+	Command string            `yaml:"command"` // executable to run
+	Args    []string          `yaml:"args"`    // its arguments
+	Env     map[string]string `yaml:"env"`     // extra environment for it
 }
 
 // Voice configures speech both ways, all handled locally so no audio leaves the

@@ -75,8 +75,9 @@ func newChatCmd() *cobra.Command {
 }
 
 // buildAgent assembles the provider, memory, and toolset shared by every
-// front end, gated by the given guard.
-func buildAgent(cfg *config.Config, model string, guard agent.Gate) (*agent.Agent, string, error) {
+// front end, gated by the given guard. Any extra tools, such as those dialed
+// from MCP servers, are added on top of the built-ins.
+func buildAgent(cfg *config.Config, model string, guard agent.Gate, extra ...tool.Tool) (*agent.Agent, string, error) {
 	name, modelID, pc, err := cfg.Resolve(model)
 	if err != nil {
 		return nil, "", err
@@ -100,6 +101,9 @@ func buildAgent(cfg *config.Config, model string, guard agent.Gate) (*agent.Agen
 		reg.Add(t)
 	}
 	for _, t := range skills.Tools() {
+		reg.Add(t)
+	}
+	for _, t := range extra {
 		reg.Add(t)
 	}
 	a := &agent.Agent{

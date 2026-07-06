@@ -89,6 +89,21 @@ channels:
 #   ffmpeg: ffmpeg
 #   tts_model: ~/.tomo/models/en_US-amy-medium.onnx
 #   tts_bin: piper
+
+# MCP attaches Model Context Protocol servers on startup. Each one is launched
+# as a subprocess and its tools join the toolset, namespaced by the server key
+# (a filesystem tool named read becomes files_read). External tools run under
+# the exec policy, so they are gated the same as anything else.
+# mcp:
+#   servers:
+#     files:
+#       command: mcp-server-filesystem
+#       args: [/Users/me/work]
+#     github:
+#       command: npx
+#       args: [-y, "@modelcontextprotocol/server-github"]
+#       env:
+#         GITHUB_TOKEN: ${GITHUB_TOKEN}
 `
 
 func newOnboardCmd() *cobra.Command {
