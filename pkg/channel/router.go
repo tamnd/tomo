@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tamnd/tomo/pkg/agent"
+	"github.com/tamnd/tomo/pkg/curator"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/schedule"
@@ -29,9 +31,14 @@ type Router struct {
 	newAgent    AgentFunc
 	transcriber voice.Transcriber // nil means voice notes cannot be transcribed
 	synth       voice.Synthesizer // nil means replies are never spoken
+	curator     *curator.Curator  // nil means no reflection pass runs
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
+
+	// reflecting tracks in-flight curation goroutines so a graceful shutdown,
+	// and tests, can wait for them to finish.
+	reflecting sync.WaitGroup
 }
 
 // NewRouter wires a router. transcriber and synth may each be nil: without a
@@ -40,6 +47,15 @@ type Router struct {
 func NewRouter(st *store.Store, engine *policy.Engine, auditor policy.Auditor, newAgent AgentFunc, transcriber voice.Transcriber, synth voice.Synthesizer) *Router {
 	return &Router{store: st, engine: engine, auditor: auditor, newAgent: newAgent, transcriber: transcriber, synth: synth, locks: map[string]*sync.Mutex{}}
 }
+
+// Curate attaches a curator so a reflection pass runs after each substantial
+// turn. Optional: with none set, memory only changes when the model writes it
+// during a live turn.
+func (r *Router) Curate(c *curator.Curator) { r.curator = c }
+
+// WaitIdle blocks until every in-flight curation has finished. Used on
+// shutdown so a reflection is not cut off mid-write, and by tests.
+func (r *Router) WaitIdle() { r.reflecting.Wait() }
 
 // HandlerFor returns the Handler for a channel by name.
 func (r *Router) HandlerFor(name string) Handler {
@@ -93,7 +109,23 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	}
 	if err == nil && ctx.Err() == nil {
 		r.speak(ctx, x, sink.said.String())
+		r.reflect(key, history, turn)
 	}
+}
+
+// reflect kicks off a curation pass over a finished turn, off the request path
+// so the user is never kept waiting on it. It runs only for substantial turns,
+// on a detached context since the request's is about to be cancelled. Memory
+// is concurrency-safe, so a pass may overlap the next turn's index read.
+func (r *Router) reflect(source string, history, turn []provider.Message) {
+	if r.curator == nil || !curator.Worthwhile(turn) {
+		return
+	}
+	r.reflecting.Go(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_ = r.curator.Reflect(ctx, source, history, turn)
+	})
 }
 
 // speak sends the reply back as a voice note when the user spoke first and the

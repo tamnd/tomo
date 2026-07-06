@@ -76,6 +76,12 @@ func newServeCmd() *cobra.Command {
 				synth = &voice.Speaker{Bin: v.TTSBin, Model: v.TTSModel, FFmpeg: v.FFmpeg}
 			}
 			router := channel.NewRouter(st, engine, auditor, newAgent, transcriber, synth)
+			cur, err := buildCurator(cfg, model)
+			if err != nil {
+				return err
+			}
+			router.Curate(cur)
+			defer router.WaitIdle()
 
 			channels := []channel.Channel{&webchat.WebChat{Addr: addr}}
 			if tg := cfg.Channels.Telegram; tg.Token != "" {
