@@ -110,6 +110,21 @@ channels:
 #       url: https://mcp.example.com/mcp
 #       headers:
 #         Authorization: Bearer ${MCP_TOKEN}
+
+# Workers are named specialists that handle some conversations in their own
+# right. The default worker is tomo itself and needs no entry here. Each worker
+# gets its own persona, an optional model, its own policy (merged over the
+# top-level one), and its own memory, so nothing one learns leaks into another's
+# prompt. Reach a worker by starting a message with '@name', or bind a
+# channel:chat to it so its messages always route there. An explicit @name wins
+# over a binding.
+# workers:
+#   research:
+#     persona: You dig up sources and summarize. Cite what you find.
+#     model: anthropic/claude-fable-5
+#     policy:
+#       write: deny        # this one only reads and reports
+#     channels: ["slack:C0RESEARCH"]
 `
 
 func newOnboardCmd() *cobra.Command {
