@@ -117,7 +117,9 @@ channels:
 # top-level one), and its own memory, so nothing one learns leaks into another's
 # prompt. Reach a worker by starting a message with '@name', or bind a
 # channel:chat to it so its messages always route there. An explicit @name wins
-# over a binding.
+# over a binding. With more than one worker defined, a worker can also hand a
+# self-contained task to a colleague with its handoff tool; the handoff is one
+# level deep, so a colleague cannot hand off again.
 # workers:
 #   research:
 #     persona: You dig up sources and summarize. Cite what you find.

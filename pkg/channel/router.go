@@ -92,6 +92,11 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	a.Gate = policy.NewGuard(r.work.Engine(worker), x.Approver, r.auditor)
 	a.Tools.Add(schedule.Tool(r.store, x.Channel, x.In.Chat))
 	a.Tools.Add(attachTool(x.Reply))
+	// With colleagues to hand off to, the top-level worker gets a handoff tool.
+	// The delegate is built without one, so a handoff cannot chain.
+	if len(r.work.Names()) > 1 {
+		a.Tools.Add(handoffTool(r.work, worker, r.auditor))
+	}
 
 	sink := &replySink{r: x.Reply}
 	turn, err := a.Turn(ctx, history, x.In.Message(), sink)
