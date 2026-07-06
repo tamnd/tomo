@@ -54,8 +54,12 @@ func newServeCmd() *cobra.Command {
 			}
 			defer auditor.Close()
 
+			out := cmd.OutOrStdout()
+			mcpTools, closeMCP := dialMCP(cmd.Context(), cfg, out)
+			defer closeMCP()
+
 			newAgent := func() (*agent.Agent, error) {
-				a, _, err := buildAgent(cfg, model, nil)
+				a, _, err := buildAgent(cfg, model, nil, mcpTools...)
 				return a, err
 			}
 			var transcriber voice.Transcriber
@@ -82,7 +86,6 @@ func newServeCmd() *cobra.Command {
 				channels = append(channels, &imessage.IMessage{Allow: im.AllowHandles, DBPath: im.DBPath})
 			}
 
-			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "tomo serving on http://%s\n", addr)
 			for _, ch := range channels {
 				fmt.Fprintf(out, "  channel: %s\n", ch.Name())
