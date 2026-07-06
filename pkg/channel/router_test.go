@@ -94,6 +94,12 @@ func (y *yesApprover) Approve(_ context.Context, _ policy.Request) (bool, error)
 }
 
 func newTestRouter(t *testing.T, resp []*provider.Response, tools ...tool.Tool) (*Router, *scriptProvider, *store.Store) {
+	return newTestRouterCur(t, nil, resp, tools...)
+}
+
+// newTestRouterCur builds a router whose single worker also runs the given
+// curator, for the reflection tests. A nil curator means no reflection.
+func newTestRouterCur(t *testing.T, cur *curator.Curator, resp []*provider.Response, tools ...tool.Tool) (*Router, *scriptProvider, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -105,7 +111,8 @@ func newTestRouter(t *testing.T, resp []*provider.Response, tools ...tool.Tool) 
 	newAgent := func() (*agent.Agent, error) {
 		return &agent.Agent{Provider: sp, Model: "m", Tools: reg, MaxTurns: 8}, nil
 	}
-	return NewRouter(st, policy.New(policy.Config{}), nil, newAgent, nil, nil), sp, st
+	work := Solo(newAgent, policy.New(policy.Config{}), cur)
+	return NewRouter(st, work, nil, nil, nil), sp, st
 }
 
 func TestRouterFoldsVoiceIntoTurn(t *testing.T) {
@@ -366,17 +373,16 @@ func TestRouterRunsCuratorAfterSubstantialTurn(t *testing.T) {
 		Schema: json.RawMessage(`{"type":"object"}`),
 		Run:    func(context.Context, json.RawMessage) (string, error) { return "echoed", nil },
 	}
-	r, _, _ := newTestRouter(t, []*provider.Response{
-		{Blocks: []provider.Block{{Type: provider.BlockToolUse, ID: "t1", Name: "echo", Input: json.RawMessage(`{}`)}}, StopReason: provider.StopToolUse},
-		{Blocks: []provider.Block{provider.Text("all set")}, StopReason: provider.StopEndTurn},
-	}, echoTool)
-
 	mem := &memory.Memory{Dir: t.TempDir()}
 	curatorProvider := &scriptProvider{responses: []*provider.Response{
 		{Blocks: []provider.Block{{Type: provider.BlockToolUse, ID: "c1", Name: "memory_write", Input: json.RawMessage(`{"slug":"likes-echo","title":"Likes echoes","body":"Asked for an echo."}`)}}, StopReason: provider.StopToolUse},
 		{Blocks: []provider.Block{provider.Text("curated")}, StopReason: provider.StopEndTurn},
 	}}
-	r.Curate(&curator.Curator{Provider: curatorProvider, Model: "m", Memory: mem})
+	cur := &curator.Curator{Provider: curatorProvider, Model: "m", Memory: mem}
+	r, _, _ := newTestRouterCur(t, cur, []*provider.Response{
+		{Blocks: []provider.Block{{Type: provider.BlockToolUse, ID: "t1", Name: "echo", Input: json.RawMessage(`{}`)}}, StopReason: provider.StopToolUse},
+		{Blocks: []provider.Block{provider.Text("all set")}, StopReason: provider.StopEndTurn},
+	}, echoTool)
 
 	r.HandlerFor("web")(context.Background(), Exchange{
 		In: Inbound{Chat: "c", Text: "echo please"}, Reply: &captureReply{}, Approver: &yesApprover{},
@@ -393,13 +399,13 @@ func TestRouterRunsCuratorAfterSubstantialTurn(t *testing.T) {
 }
 
 func TestRouterSkipsCuratorForTrivialTurn(t *testing.T) {
-	r, _, _ := newTestRouter(t, []*provider.Response{
-		{Blocks: []provider.Block{provider.Text("hi")}, StopReason: provider.StopEndTurn},
-	})
 	mem := &memory.Memory{Dir: t.TempDir()}
 	// The curator provider has no scripted responses: if the curator ran, it
 	// would panic on the empty script, so this also proves it did not run.
-	r.Curate(&curator.Curator{Provider: &scriptProvider{}, Model: "m", Memory: mem})
+	cur := &curator.Curator{Provider: &scriptProvider{}, Model: "m", Memory: mem}
+	r, _, _ := newTestRouterCur(t, cur, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("hi")}, StopReason: provider.StopEndTurn},
+	})
 
 	r.HandlerFor("web")(context.Background(), Exchange{
 		In: Inbound{Chat: "c", Text: "hi"}, Reply: &captureReply{}, Approver: &yesApprover{},

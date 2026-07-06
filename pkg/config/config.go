@@ -36,7 +36,19 @@ type Config struct {
 	Heartbeat    Heartbeat           `yaml:"heartbeat"`
 	Voice        Voice               `yaml:"voice"`
 	MCP          MCP                 `yaml:"mcp"`
+	Workers      map[string]Worker   `yaml:"workers"`
 	DataDir      string              `yaml:"data_dir"`
+}
+
+// Worker is a named specialist that handles some conversations in its own
+// right: its own persona, an optional model, its own policy, and the
+// channel:chat bindings that route to it. Anything left unset falls back to the
+// top-level default. The default worker, tomo, needs no entry here.
+type Worker struct {
+	Persona  string   `yaml:"persona"`  // extra system-prompt lines that set its role
+	Model    string   `yaml:"model"`    // provider/model override, empty means the default
+	Policy   Policy   `yaml:"policy"`   // its own gate, merged over the top-level policy
+	Channels []string `yaml:"channels"` // channel:chat keys whose messages route to it
 }
 
 // MCP lists the Model Context Protocol servers to attach on startup. Each one

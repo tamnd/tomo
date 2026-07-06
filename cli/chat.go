@@ -43,7 +43,7 @@ func newChatCmd() *cobra.Command {
 				return err
 			}
 			defer closeAudit()
-			a, label, err := buildAgent(cfg, model, guard)
+			a, label, err := buildAgent(cfg, agentBuild{model: model}, guard)
 			if err != nil {
 				return err
 			}
@@ -75,11 +75,22 @@ func newChatCmd() *cobra.Command {
 	return cmd
 }
 
+// agentBuild is the per-worker input to buildAgent: which persona and model to
+// run under, and which memory and skills dirs to read. The zero value plus a
+// model spec builds the default worker against the top-level dirs.
+type agentBuild struct {
+	persona   string // extra system-prompt lines, empty for the default worker
+	model     string // provider/model spec, empty means the config default
+	memoryDir string // empty means <data>/memory
+	skillsDir string // empty means <data>/skills
+}
+
 // buildAgent assembles the provider, memory, and toolset shared by every
 // front end, gated by the given guard. Any extra tools, such as those dialed
-// from MCP servers, are added on top of the built-ins.
-func buildAgent(cfg *config.Config, model string, guard agent.Gate, extra ...tool.Tool) (*agent.Agent, string, error) {
-	name, modelID, pc, err := cfg.Resolve(model)
+// from MCP servers, are added on top of the built-ins. The build spec picks the
+// persona, model, and dirs, so each worker reads its own memory and skills.
+func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool.Tool) (*agent.Agent, string, error) {
+	name, modelID, pc, err := cfg.Resolve(b.model)
 	if err != nil {
 		return nil, "", err
 	}
@@ -87,12 +98,12 @@ func buildAgent(cfg *config.Config, model string, guard agent.Gate, extra ...too
 	if err != nil {
 		return nil, "", fmt.Errorf("provider %s: %w", name, err)
 	}
-	mem := &memory.Memory{Dir: filepath.Join(cfg.DataDir, "memory")}
+	mem := &memory.Memory{Dir: orDefault(b.memoryDir, filepath.Join(cfg.DataDir, "memory"))}
 	index, err := mem.Index()
 	if err != nil {
 		return nil, "", err
 	}
-	skills := &skill.Store{Dir: filepath.Join(cfg.DataDir, "skills")}
+	skills := &skill.Store{Dir: orDefault(b.skillsDir, filepath.Join(cfg.DataDir, "skills"))}
 	skillIndex, err := skills.Index()
 	if err != nil {
 		return nil, "", err
@@ -110,7 +121,7 @@ func buildAgent(cfg *config.Config, model string, guard agent.Gate, extra ...too
 	a := &agent.Agent{
 		Provider:  p,
 		Model:     modelID,
-		System:    agent.SystemPrompt(time.Now(), index, skillIndex),
+		System:    agent.SystemPrompt(time.Now(), b.persona, index, skillIndex),
 		Tools:     reg,
 		Gate:      guard,
 		MaxTokens: cfg.Agent.MaxTokens,
@@ -119,11 +130,21 @@ func buildAgent(cfg *config.Config, model string, guard agent.Gate, extra ...too
 	return a, name + "/" + modelID, nil
 }
 
-// buildCurator wires the reflection pass: same provider and model the agent
-// uses, writing into the same memory dir. serve attaches it so memory settles
+// curatorBuild is the per-worker input to buildCurator: the model to reflect
+// with and the memory, skills, and drafts dirs to write into. Empty dirs mean
+// the default worker's top-level dirs.
+type curatorBuild struct {
+	model     string
+	memoryDir string
+	skillsDir string
+	draftsDir string
+}
+
+// buildCurator wires the reflection pass: the given model, writing into the
+// worker's own memory and skill-draft dirs. serve attaches it so memory settles
 // after substantial turns without the user having to ask.
-func buildCurator(cfg *config.Config, model string) (*curator.Curator, error) {
-	name, modelID, pc, err := cfg.Resolve(model)
+func buildCurator(cfg *config.Config, b curatorBuild) (*curator.Curator, error) {
+	name, modelID, pc, err := cfg.Resolve(b.model)
 	if err != nil {
 		return nil, err
 	}
@@ -134,11 +155,19 @@ func buildCurator(cfg *config.Config, model string) (*curator.Curator, error) {
 	return &curator.Curator{
 		Provider:  p,
 		Model:     modelID,
-		Memory:    &memory.Memory{Dir: filepath.Join(cfg.DataDir, "memory")},
-		Skills:    &skill.Store{Dir: filepath.Join(cfg.DataDir, "skills")},
-		Drafts:    &skill.Store{Dir: filepath.Join(cfg.DataDir, "skill-drafts")},
+		Memory:    &memory.Memory{Dir: orDefault(b.memoryDir, filepath.Join(cfg.DataDir, "memory"))},
+		Skills:    &skill.Store{Dir: orDefault(b.skillsDir, filepath.Join(cfg.DataDir, "skills"))},
+		Drafts:    &skill.Store{Dir: orDefault(b.draftsDir, filepath.Join(cfg.DataDir, "skill-drafts"))},
 		MaxTokens: cfg.Agent.MaxTokens,
 	}, nil
+}
+
+// orDefault returns v when set, otherwise the fallback.
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 // buildGuard wires the policy engine, the given approver, and a file auditor.

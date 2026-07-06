@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 
-	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/channel"
 	"github.com/tamnd/tomo/pkg/channel/discord"
 	"github.com/tamnd/tomo/pkg/channel/imessage"
@@ -41,10 +41,6 @@ func newServeCmd() *cobra.Command {
 			}
 			defer st.Close()
 
-			engine := policy.New(policy.Config{
-				Read: cfg.Policy.Read, Net: cfg.Policy.Net,
-				Write: cfg.Policy.Write, Exec: cfg.Policy.Exec, Rules: cfg.Policy.Rules,
-			})
 			if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 				return err
 			}
@@ -57,15 +53,10 @@ func newServeCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			mcpTools, closeMCP := dialMCP(cmd.Context(), cfg, out)
 			defer closeMCP()
-			// Tools that come from an MCP server are not tomo's own code, so they
-			// default to ask even when their class would otherwise run.
-			for _, t := range mcpTools {
-				engine.MarkExternal(t.Name)
-			}
 
-			newAgent := func() (*agent.Agent, error) {
-				a, _, err := buildAgent(cfg, model, nil, mcpTools...)
-				return a, err
+			work, err := buildWorkforce(cfg, model, mcpTools)
+			if err != nil {
+				return err
 			}
 			var transcriber voice.Transcriber
 			if v := cfg.Voice; v.Model != "" {
@@ -75,12 +66,7 @@ func newServeCmd() *cobra.Command {
 			if v := cfg.Voice; v.TTSModel != "" {
 				synth = &voice.Speaker{Bin: v.TTSBin, Model: v.TTSModel, FFmpeg: v.FFmpeg}
 			}
-			router := channel.NewRouter(st, engine, auditor, newAgent, transcriber, synth)
-			cur, err := buildCurator(cfg, model)
-			if err != nil {
-				return err
-			}
-			router.Curate(cur)
+			router := channel.NewRouter(st, work, auditor, transcriber, synth)
 			defer router.WaitIdle()
 
 			channels := []channel.Channel{&webchat.WebChat{Addr: addr}}
@@ -100,6 +86,9 @@ func newServeCmd() *cobra.Command {
 			fmt.Fprintf(out, "tomo serving on http://%s\n", addr)
 			for _, ch := range channels {
 				fmt.Fprintf(out, "  channel: %s\n", ch.Name())
+			}
+			if names := work.Names(); len(names) > 1 {
+				fmt.Fprintf(out, "  workers: %s\n", strings.Join(names, ", "))
 			}
 			if transcriber != nil {
 				fmt.Fprintf(out, "  voice in: whisper (%s)\n", cfg.Voice.Model)

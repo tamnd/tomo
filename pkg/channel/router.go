@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/curator"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
@@ -17,21 +16,16 @@ import (
 	"github.com/tamnd/tomo/pkg/voice"
 )
 
-// AgentFunc returns a ready base agent, minus its gate. It runs once per
-// message so the system prompt reflects the current memory index.
-type AgentFunc func() (*agent.Agent, error)
-
 // Router turns an inbound message into a persisted, policy-gated agent turn
 // and streams the reply back. It is channel-agnostic: HandlerFor binds it to a
-// named channel and returns the Handler that channel drives.
+// named channel and returns the Handler that channel drives. A Workforce
+// decides which worker handles each message and builds that worker's agent.
 type Router struct {
 	store       *store.Store
-	engine      *policy.Engine
+	work        Workforce
 	auditor     policy.Auditor
-	newAgent    AgentFunc
 	transcriber voice.Transcriber // nil means voice notes cannot be transcribed
 	synth       voice.Synthesizer // nil means replies are never spoken
-	curator     *curator.Curator  // nil means no reflection pass runs
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -44,14 +38,9 @@ type Router struct {
 // NewRouter wires a router. transcriber and synth may each be nil: without a
 // transcriber a voice note is acknowledged but not understood, and without a
 // synth a reply is never spoken back.
-func NewRouter(st *store.Store, engine *policy.Engine, auditor policy.Auditor, newAgent AgentFunc, transcriber voice.Transcriber, synth voice.Synthesizer) *Router {
-	return &Router{store: st, engine: engine, auditor: auditor, newAgent: newAgent, transcriber: transcriber, synth: synth, locks: map[string]*sync.Mutex{}}
+func NewRouter(st *store.Store, work Workforce, auditor policy.Auditor, transcriber voice.Transcriber, synth voice.Synthesizer) *Router {
+	return &Router{store: st, work: work, auditor: auditor, transcriber: transcriber, synth: synth, locks: map[string]*sync.Mutex{}}
 }
-
-// Curate attaches a curator so a reflection pass runs after each substantial
-// turn. Optional: with none set, memory only changes when the model writes it
-// during a live turn.
-func (r *Router) Curate(c *curator.Curator) { r.curator = c }
 
 // WaitIdle blocks until every in-flight curation has finished. Used on
 // shutdown so a reflection is not cut off mid-write, and by tests.
@@ -69,6 +58,11 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	defer x.Reply.Done()
 
 	r.foldAudio(ctx, &x)
+
+	// Pick the worker before anything else so an @name prefix does not reach the
+	// model or the session ledger.
+	worker, cleaned := r.work.Route(x.Channel, x.In.Chat, x.In.Text)
+	x.In.Text = cleaned
 
 	if r.command(x) {
 		return
@@ -89,13 +83,13 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 		return
 	}
 
-	base, err := r.newAgent()
+	base, err := r.work.Agent(worker)
 	if err != nil {
 		x.Reply.Notice("agent error: " + err.Error())
 		return
 	}
 	a := *base
-	a.Gate = policy.NewGuard(r.engine, x.Approver, r.auditor)
+	a.Gate = policy.NewGuard(r.work.Engine(worker), x.Approver, r.auditor)
 	a.Tools.Add(schedule.Tool(r.store, x.Channel, x.In.Chat))
 	a.Tools.Add(attachTool(x.Reply))
 
@@ -109,7 +103,7 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	}
 	if err == nil && ctx.Err() == nil {
 		r.speak(ctx, x, sink.said.String())
-		r.reflect(key, history, turn)
+		r.reflect(worker, key, history, turn)
 	}
 }
 
@@ -117,14 +111,15 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 // so the user is never kept waiting on it. It runs only for substantial turns,
 // on a detached context since the request's is about to be cancelled. Memory
 // is concurrency-safe, so a pass may overlap the next turn's index read.
-func (r *Router) reflect(source string, history, turn []provider.Message) {
-	if r.curator == nil || !curator.Worthwhile(turn) {
+func (r *Router) reflect(worker, source string, history, turn []provider.Message) {
+	cur := r.work.Curator(worker)
+	if cur == nil || !curator.Worthwhile(turn) {
 		return
 	}
 	r.reflecting.Go(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		_ = r.curator.Reflect(ctx, source, history, turn)
+		_ = cur.Reflect(ctx, source, history, turn)
 	})
 }
 
@@ -237,6 +232,9 @@ func (r *Router) Background(ctx context.Context, ch, chat, prompt string) (strin
 	unlock := r.lock(key)
 	defer unlock()
 
+	// A scheduled chat may be bound to a specialist; run the beat as that worker.
+	worker, _ := r.work.Route(ch, chat, "")
+
 	sess, err := r.store.Session(key, ch)
 	if err != nil {
 		return "", err
@@ -245,12 +243,12 @@ func (r *Router) Background(ctx context.Context, ch, chat, prompt string) (strin
 	if err != nil {
 		return "", err
 	}
-	base, err := r.newAgent()
+	base, err := r.work.Agent(worker)
 	if err != nil {
 		return "", err
 	}
 	a := *base
-	a.Gate = policy.NewGuard(r.engine, denyApprover{}, r.auditor)
+	a.Gate = policy.NewGuard(r.work.Engine(worker), denyApprover{}, r.auditor)
 	a.Tools.Add(schedule.Tool(r.store, ch, chat))
 
 	var buf strings.Builder
