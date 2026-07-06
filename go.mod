@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/fang v1.0.0
 	github.com/coder/websocket v1.8.15
 	github.com/spf13/cobra v1.10.2
+	github.com/tamnd/any-cli v0.4.1
 	golang.org/x/net v0.56.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
