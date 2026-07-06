@@ -20,6 +20,7 @@ import (
 	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/provider"
+	"github.com/tamnd/tomo/pkg/skill"
 	"github.com/tamnd/tomo/pkg/tool"
 )
 
@@ -29,6 +30,13 @@ type Curator struct {
 	Model     string
 	Memory    *memory.Memory
 	MaxTokens int
+	// Skills is the installed skill store, read here only so the curator can
+	// avoid drafting one that already exists. Drafts is where a proposed skill
+	// is written. Both nil means the curator only curates memory; installing a
+	// draft is always a separate, explicit user act, never something a
+	// reflection does.
+	Skills *skill.Store
+	Drafts *skill.Store
 	// Now supplies the date stamped onto a memory's provenance. Injectable so
 	// tests are deterministic; nil means time.Now.
 	Now func() time.Time
@@ -72,10 +80,14 @@ func (c *Curator) Reflect(ctx context.Context, source string, history, turn []pr
 	prov := memory.Provenance{Source: "curator", From: source, On: now().Format("2006-01-02")}
 
 	reg := tool.NewRegistry(readTool(c.Memory), writeTool(c.Memory, prov))
+	if c.Drafts != nil {
+		reg.Add(skillListTool(c.Skills, c.Drafts))
+		reg.Add(skillDraftTool(c.Drafts))
+	}
 	a := &agent.Agent{
 		Provider:  c.Provider,
 		Model:     c.Model,
-		System:    systemPrompt,
+		System:    c.system(),
 		Tools:     reg,
 		MaxTokens: c.MaxTokens,
 		MaxTurns:  6,
@@ -86,8 +98,18 @@ func (c *Curator) Reflect(ctx context.Context, source string, history, turn []pr
 	return err
 }
 
+// system builds the curator's instructions, adding the skill-drafting clause
+// only when a drafts store is attached.
+func (c *Curator) system() string {
+	s := systemPrompt
+	if c.Drafts != nil {
+		s += "\n\n" + draftingClause
+	}
+	return s
+}
+
 const systemPrompt = "You are the memory curator for tomo, a personal AI agent. You have just observed a " +
-	"conversation between tomo and its user, and your only job is to update tomo's long-term memory.\n" +
+	"conversation between tomo and its user, and your job is to update tomo's long-term memory.\n" +
 	"Record durable facts worth carrying into future conversations: stable preferences, ongoing projects, " +
 	"people who matter, standing constraints, and corrections the user made. Skip anything that only mattered " +
 	"in the moment.\n" +
@@ -95,6 +117,14 @@ const systemPrompt = "You are the memory curator for tomo, a personal AI agent. 
 	"near-duplicate. Keep each topic to one focused fact with a short kebab-case slug.\n" +
 	"Most exchanges hold nothing durable. When that is the case, write nothing and stop. Do not narrate your " +
 	"reasoning; just make the memory changes, if any, and end."
+
+const draftingClause = "You may also draft a skill when the exchange shows a reusable, multi-step workflow the " +
+	"user is likely to repeat: a sequence of tool calls with a clear goal, not a one-off answer. Draft only " +
+	"when you have reason to think it recurs (memory or the earlier context shows it before), and never when a " +
+	"skill or draft already covers it, so list what exists first. A draft is a proposal, not an install: it " +
+	"waits for the user to review and install it themselves, so keep the instructions plain, declare only the " +
+	"capabilities the workflow truly needs, and hide nothing in comments. Drafting is the exception; skip it " +
+	"unless the workflow clearly earns a skill."
 
 // readTool mirrors memory_read so the curator can inspect a topic before it
 // overwrites it.

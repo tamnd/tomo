@@ -3,12 +3,14 @@ package curator
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/provider"
+	"github.com/tamnd/tomo/pkg/skill"
 )
 
 // scriptProvider replays canned responses and records the requests it saw.
@@ -79,6 +81,49 @@ func TestReflectCanWriteNothing(t *testing.T) {
 	}
 	if idx, _ := mem.Index(); idx != "" {
 		t.Errorf("a quiet reflection should write no memory, got index %q", idx)
+	}
+}
+
+func TestReflectDraftsSkillWithoutInstalling(t *testing.T) {
+	root := t.TempDir()
+	mem := &memory.Memory{Dir: filepath.Join(root, "memory")}
+	installed := &skill.Store{Dir: filepath.Join(root, "skills")}
+	drafts := &skill.Store{Dir: filepath.Join(root, "drafts")}
+
+	sp := &scriptProvider{responses: []*provider.Response{
+		toolUse("s1", "skill_draft", `{"name":"weekly-report","description":"Assemble the Monday report","body":"1. gather commits\n2. summarize\n3. post","permissions":{"read":true,"net":true}}`),
+		endTurn("drafted it"),
+	}}
+	c := &Curator{Provider: sp, Model: "m", Memory: mem, Skills: installed, Drafts: drafts, Now: fixedClock}
+
+	turn := []provider.Message{
+		provider.UserText("do my weekly report again"),
+		{Role: provider.RoleAssistant, Blocks: []provider.Block{{Type: provider.BlockToolUse, Name: "commits"}}},
+	}
+	if err := c.Reflect(context.Background(), "web:c", nil, turn); err != nil {
+		t.Fatal(err)
+	}
+
+	// The draft exists, but nothing was installed: install stays a user act.
+	if body, err := drafts.Read("weekly-report"); err != nil || !strings.Contains(body, "gather commits") {
+		t.Fatalf("draft = %q %v", body, err)
+	}
+	if idx, _ := installed.Index(); idx != "" {
+		t.Errorf("curator must not install, installed index = %q", idx)
+	}
+}
+
+func TestNoDraftToolWithoutDraftsStore(t *testing.T) {
+	// With no drafts store, the curator only curates memory: a skill_draft call
+	// would fail as an unknown tool, so this proves the tool is absent.
+	mem := &memory.Memory{Dir: t.TempDir()}
+	sp := &scriptProvider{responses: []*provider.Response{endTurn("nothing to do")}}
+	c := &Curator{Provider: sp, Model: "m", Memory: mem}
+	if err := c.Reflect(context.Background(), "web:c", nil, []provider.Message{provider.UserText("hi")}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.system(), "memory curator") || strings.Contains(c.system(), "draft a skill") {
+		t.Errorf("system prompt should omit the drafting clause: %q", c.system())
 	}
 }
 
