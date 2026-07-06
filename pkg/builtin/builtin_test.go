@@ -87,6 +87,30 @@ func TestFetch(t *testing.T) {
 	}
 }
 
+func TestFetchHTMLBecomesMarkdown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<html><head><title>Doc</title></head>
+			<body><nav>skip me</nav><article><h1>Heading</h1><p>Read <a href="https://x.test">this</a>.</p></article></body></html>`))
+	}))
+	defer srv.Close()
+
+	f := find(t, "fetch")
+	out, err := f.Run(context.Background(), mustJSON(map[string]string{"url": srv.URL}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "# Doc") || !strings.Contains(out, "# Heading") {
+		t.Errorf("expected markdown title and heading, got %q", out)
+	}
+	if !strings.Contains(out, "[this](https://x.test)") {
+		t.Errorf("expected a markdown link, got %q", out)
+	}
+	if strings.Contains(out, "skip me") || strings.Contains(out, "<article>") {
+		t.Errorf("chrome or raw html leaked: %q", out)
+	}
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
