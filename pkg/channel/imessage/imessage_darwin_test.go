@@ -5,6 +5,7 @@ package imessage
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,11 +25,53 @@ func testDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(`
 		CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
 		CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, handle_id INTEGER, is_from_me INTEGER);
+		CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, filename TEXT, mime_type TEXT);
+		CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
 		INSERT INTO handle (ROWID, id) VALUES (1, '+15550001'), (2, '+15550002');`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return db
+}
+
+// a tiny valid PNG (1x1) so ReadImageFile accepts the file on disk.
+var onePixelPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+	0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+	0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+func TestPollReadsImageAttachment(t *testing.T) {
+	db := testDB(t)
+	dir := t.TempDir()
+	pic := filepath.Join(dir, "photo.png")
+	if err := os.WriteFile(pic, onePixelPNG, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := db.Exec(`
+		INSERT INTO message (ROWID, text, handle_id, is_from_me) VALUES (20, NULL, 1, 0);
+		INSERT INTO attachment (ROWID, filename, mime_type) VALUES (1, ?, 'image/png');
+		INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (20, 1);`, pic)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, _, err := poll(context.Background(), db, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if len(msgs[0].Images) != 1 {
+		t.Fatalf("got %d images, want 1", len(msgs[0].Images))
+	}
+	if got := msgs[0].Images[0].MediaType; got != "image/png" {
+		t.Errorf("media type = %q, want image/png", got)
+	}
 }
 
 func TestPollReturnsInboundOnly(t *testing.T) {

@@ -189,13 +189,24 @@ func (d *Discord) onMessage(ctx context.Context, data json.RawMessage) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return
 	}
-	// Ignore our own and other bots' messages, and empty content.
-	if m.Author.Bot || m.Content == "" || !d.allowed(m.ChannelID) {
+	// Ignore our own and other bots' messages, and messages with nothing in
+	// them. A bare image with no text is still worth handling.
+	if m.Author.Bot || !d.allowed(m.ChannelID) || (m.Content == "" && len(m.Attachments) == 0) {
 		return
+	}
+	in := channel.Inbound{Chat: m.ChannelID, User: m.Author.ID, Text: m.Content}
+	for _, att := range m.Attachments {
+		if !strings.HasPrefix(att.ContentType, "image/") {
+			continue
+		}
+		// Discord attachment URLs are public CDN links, no auth needed.
+		if img, err := channel.FetchImage(ctx, http.DefaultClient, att.URL, nil); err == nil {
+			in.Images = append(in.Images, img)
+		}
 	}
 	reply := &dcReply{d: d, ctx: ctx, channelID: m.ChannelID}
 	x := channel.Exchange{
-		In:       channel.Inbound{Chat: m.ChannelID, User: m.Author.ID, Text: m.Content},
+		In:       in,
 		Reply:    reply,
 		Approver: &dcApprover{d: d, ctx: ctx, channelID: m.ChannelID},
 	}
@@ -343,14 +354,22 @@ func (a *dcApprover) Approve(_ context.Context, req policy.Request) (bool, error
 // Wire types for the events we read.
 
 type messageCreate struct {
-	ID        string `json:"id"`
-	ChannelID string `json:"channel_id"`
-	Content   string `json:"content"`
-	GuildID   string `json:"guild_id"`
-	Author    struct {
+	ID          string       `json:"id"`
+	ChannelID   string       `json:"channel_id"`
+	Content     string       `json:"content"`
+	GuildID     string       `json:"guild_id"`
+	Attachments []attachment `json:"attachments"`
+	Author      struct {
 		ID  string `json:"id"`
 		Bot bool   `json:"bot"`
 	} `json:"author"`
+}
+
+// attachment is one file on a message. content_type is set for uploads, so we
+// can tell images from everything else without downloading first.
+type attachment struct {
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
 }
 
 const interactionComponent = 3

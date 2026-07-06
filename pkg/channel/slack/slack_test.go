@@ -135,3 +135,64 @@ func TestOpenConnectionReportsError(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// tiny valid PNG served by the fake file endpoint in the image test.
+var onePixelPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+	0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+	0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+func TestOnEventIngestsFileShareImage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer xoxb-1" {
+			t.Errorf("url_private fetch missing bearer, got %q", got)
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(onePixelPNG)
+	}))
+	defer srv.Close()
+
+	s := &Slack{Allow: []string{"C1"}, BotToken: "xoxb-1"}
+	got := make(chan channel.Inbound, 1)
+	s.handler = func(_ context.Context, x channel.Exchange) { got <- x.In }
+
+	payload := `{"event":{"type":"message","subtype":"file_share","channel":"C1","user":"U1","text":"see this",` +
+		`"files":[{"mimetype":"image/png","url_private":"` + srv.URL + `/f.png"}]}}`
+	s.onEvent(context.Background(), json.RawMessage(payload))
+
+	select {
+	case in := <-got:
+		if in.Text != "see this" {
+			t.Errorf("text = %q", in.Text)
+		}
+		if len(in.Images) != 1 {
+			t.Errorf("images = %d, want 1", len(in.Images))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never ran")
+	}
+}
+
+func TestOnEventSkipsBotAndUnlisted(t *testing.T) {
+	s := &Slack{Allow: []string{"C1"}, BotToken: "x"}
+	var mu sync.Mutex
+	var turns int
+	s.handler = func(_ context.Context, _ channel.Exchange) {
+		mu.Lock()
+		turns++
+		mu.Unlock()
+	}
+	// our own reply (bot_id set), and a channel not on the allowlist
+	s.onEvent(context.Background(), json.RawMessage(`{"event":{"type":"message","channel":"C1","bot_id":"B1","text":"hi"}}`))
+	s.onEvent(context.Background(), json.RawMessage(`{"event":{"type":"message","channel":"C9","user":"U1","text":"hi"}}`))
+	time.Sleep(30 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if turns != 0 {
+		t.Errorf("started %d turns, want 0", turns)
+	}
+}

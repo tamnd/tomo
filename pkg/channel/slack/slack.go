@@ -135,30 +135,56 @@ func (s *Slack) session(ctx context.Context) error {
 func (s *Slack) onEvent(ctx context.Context, payload json.RawMessage) {
 	var p struct {
 		Event struct {
-			Type    string `json:"type"`
-			Subtype string `json:"subtype"`
-			Channel string `json:"channel"`
-			User    string `json:"user"`
-			Text    string `json:"text"`
-			BotID   string `json:"bot_id"`
+			Type    string      `json:"type"`
+			Subtype string      `json:"subtype"`
+			Channel string      `json:"channel"`
+			User    string      `json:"user"`
+			Text    string      `json:"text"`
+			BotID   string      `json:"bot_id"`
+			Files   []slackFile `json:"files"`
 		} `json:"event"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return
 	}
 	e := p.Event
-	// Only plain user messages: skip edits and joins (subtype) and anything a
-	// bot posted (bot_id), which includes our own replies.
-	if e.Type != "message" || e.Subtype != "" || e.BotID != "" || e.Text == "" || !s.allowed(e.Channel) {
+	// Only real user messages: skip edits and joins, and anything a bot posted
+	// (bot_id), which includes our own replies. A file_share subtype is how an
+	// image arrives, so allow that one through.
+	if e.Type != "message" || e.BotID != "" || !s.allowed(e.Channel) {
 		return
+	}
+	if e.Subtype != "" && e.Subtype != "file_share" {
+		return
+	}
+	if e.Text == "" && len(e.Files) == 0 {
+		return
+	}
+	in := channel.Inbound{Chat: e.Channel, User: e.User, Text: e.Text}
+	// url_private needs the bot token to download.
+	auth := http.Header{"Authorization": {"Bearer " + s.BotToken}}
+	for _, f := range e.Files {
+		if !strings.HasPrefix(f.Mimetype, "image/") || f.URLPrivate == "" {
+			continue
+		}
+		if img, err := channel.FetchImage(ctx, http.DefaultClient, f.URLPrivate, auth); err == nil {
+			in.Images = append(in.Images, img)
+		}
 	}
 	reply := &slReply{s: s, ctx: ctx, channelID: e.Channel}
 	x := channel.Exchange{
-		In:       channel.Inbound{Chat: e.Channel, User: e.User, Text: e.Text},
+		In:       in,
 		Reply:    reply,
 		Approver: &slApprover{s: s, ctx: ctx, channelID: e.Channel},
 	}
 	go s.handler(ctx, x)
+}
+
+// slackFile is one file shared into a channel. url_private is an authenticated
+// download URL; mimetype tells us whether it is an image before we fetch.
+type slackFile struct {
+	Mimetype   string `json:"mimetype"`
+	URLPrivate string `json:"url_private"`
 }
 
 func (s *Slack) onInteractive(_ context.Context, payload json.RawMessage) {

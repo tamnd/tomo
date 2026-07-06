@@ -155,3 +155,62 @@ func TestOnInteractionResolvesPending(t *testing.T) {
 		t.Error("pending approval not resolved")
 	}
 }
+
+// tiny valid PNG served by the fake CDN in the image test.
+var onePixelPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+	0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+	0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+func TestOnMessageIngestsImageAttachment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(onePixelPNG)
+	}))
+	defer srv.Close()
+
+	d := &Discord{Allow: []string{"c1"}}
+	got := make(chan channel.Inbound, 1)
+	d.handler = func(_ context.Context, x channel.Exchange) { got <- x.In }
+
+	payload := `{"channel_id":"c1","author":{"id":"u1"},"content":"look at this",` +
+		`"attachments":[{"url":"` + srv.URL + `/a.png","content_type":"image/png"},` +
+		`{"url":"` + srv.URL + `/doc.pdf","content_type":"application/pdf"}]}`
+	d.onMessage(context.Background(), json.RawMessage(payload))
+
+	select {
+	case in := <-got:
+		if in.Text != "look at this" {
+			t.Errorf("text = %q", in.Text)
+		}
+		if len(in.Images) != 1 {
+			t.Errorf("images = %d, want 1 (pdf skipped)", len(in.Images))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never ran")
+	}
+}
+
+func TestOnMessageSkipsEmptyAndBots(t *testing.T) {
+	d := &Discord{Allow: []string{"c1"}}
+	var mu sync.Mutex
+	var turns int
+	d.handler = func(_ context.Context, _ channel.Exchange) {
+		mu.Lock()
+		turns++
+		mu.Unlock()
+	}
+	// A bot message and an empty message both do nothing.
+	d.onMessage(context.Background(), json.RawMessage(`{"channel_id":"c1","author":{"id":"b","bot":true},"content":"hi"}`))
+	d.onMessage(context.Background(), json.RawMessage(`{"channel_id":"c1","author":{"id":"u1"},"content":""}`))
+	time.Sleep(30 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if turns != 0 {
+		t.Errorf("started %d turns, want 0", turns)
+	}
+}

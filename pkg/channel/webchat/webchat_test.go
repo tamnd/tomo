@@ -50,6 +50,47 @@ func TestServeChatDefaultsSession(t *testing.T) {
 	}
 }
 
+func TestServeChatAttachesImages(t *testing.T) {
+	// a 1x1 PNG as a data URL, the shape the browser posts.
+	png := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGNgAAAAAgABDQottAAAAABJRU5ErkJggg=="
+	dataURL := "data:image/png;base64," + png
+
+	w := &WebChat{}
+	var imgs int
+	var text string
+	w.handler = func(_ context.Context, x channel.Exchange) {
+		imgs = len(x.In.Images)
+		text = x.In.Text
+		x.Reply.Done()
+	}
+
+	body := `{"session":"s1","text":"what is this","images":["` + dataURL + `"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+	w.serveChat(httptest.NewRecorder(), req)
+
+	if text != "what is this" {
+		t.Errorf("text = %q", text)
+	}
+	if imgs != 1 {
+		t.Errorf("images attached = %d, want 1", imgs)
+	}
+}
+
+func TestServeChatDropsBadImage(t *testing.T) {
+	w := &WebChat{}
+	var imgs int
+	w.handler = func(_ context.Context, x channel.Exchange) {
+		imgs = len(x.In.Images)
+		x.Reply.Done()
+	}
+	body := `{"text":"hi","images":["data:image/png;base64,not-valid","http://x/y.png"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+	w.serveChat(httptest.NewRecorder(), req)
+	if imgs != 0 {
+		t.Errorf("bad images should be dropped, got %d", imgs)
+	}
+}
+
 func TestServeApproveResolvesToken(t *testing.T) {
 	w := &WebChat{}
 	ch := make(chan bool, 1)

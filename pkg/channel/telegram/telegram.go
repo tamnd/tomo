@@ -22,6 +22,7 @@ import (
 
 	"github.com/tamnd/tomo/pkg/channel"
 	"github.com/tamnd/tomo/pkg/policy"
+	"github.com/tamnd/tomo/pkg/provider"
 )
 
 // Telegram serves an allowlisted set of chats through the Bot API.
@@ -107,14 +108,30 @@ func (t *Telegram) dispatch(ctx context.Context, u update) {
 	switch {
 	case u.CallbackQuery != nil:
 		t.resolveCallback(ctx, u.CallbackQuery)
-	case u.Message != nil && u.Message.Text != "":
-		chatID := u.Message.Chat.ID
+	case u.Message != nil && (u.Message.Text != "" || len(u.Message.Photo) > 0):
+		m := u.Message
+		chatID := m.Chat.ID
 		if !t.allowed(chatID) {
 			return
 		}
+		text := m.Text
+		if text == "" {
+			text = m.Caption
+		}
+		in := channel.Inbound{
+			Chat: strconv.FormatInt(chatID, 10),
+			User: strconv.FormatInt(m.From.ID, 10),
+			Text: text,
+		}
+		if len(m.Photo) > 0 {
+			// The last size is the largest; send that to the model.
+			if img, err := t.fetchPhoto(ctx, m.Photo[len(m.Photo)-1].FileID); err == nil {
+				in.Images = append(in.Images, img)
+			}
+		}
 		reply := &tgReply{tg: t, ctx: ctx, chatID: chatID}
 		x := channel.Exchange{
-			In:       channel.Inbound{Chat: strconv.FormatInt(chatID, 10), User: strconv.FormatInt(u.Message.From.ID, 10), Text: u.Message.Text},
+			In:       in,
 			Reply:    reply,
 			Approver: &tgApprover{tg: t, ctx: ctx, chatID: chatID},
 		}
@@ -122,6 +139,46 @@ func (t *Telegram) dispatch(ctx context.Context, u update) {
 		// router serializes per chat.
 		go t.handler(ctx, x)
 	}
+}
+
+// fetchPhoto resolves a Telegram file id to a downloadable URL and pulls the
+// image down as a model-ready block.
+func (t *Telegram) fetchPhoto(ctx context.Context, fileID string) (provider.Block, error) {
+	path, err := t.filePath(ctx, fileID)
+	if err != nil {
+		return provider.Block{}, err
+	}
+	url := t.baseURL() + "/file/bot" + t.Token + "/" + path
+	return channel.FetchImage(ctx, t.client(), url, nil)
+}
+
+// filePath calls getFile to turn a file id into the server-side path the file
+// endpoint serves.
+func (t *Telegram) filePath(ctx context.Context, fileID string) (string, error) {
+	v := url.Values{}
+	v.Set("file_id", fileID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.method("getFile")+"?"+v.Encode(), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := t.client().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			FilePath string `json:"file_path"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if !out.OK || out.Result.FilePath == "" {
+		return "", fmt.Errorf("telegram getFile: no path for %s", fileID)
+	}
+	return out.Result.FilePath, nil
 }
 
 func (t *Telegram) resolveCallback(ctx context.Context, cq *callbackQuery) {
@@ -207,13 +264,21 @@ type update struct {
 }
 
 type message struct {
-	Text string `json:"text"`
-	Chat struct {
+	Text    string      `json:"text"`
+	Caption string      `json:"caption"`
+	Photo   []photoSize `json:"photo"`
+	Chat    struct {
 		ID int64 `json:"id"`
 	} `json:"chat"`
 	From struct {
 		ID int64 `json:"id"`
 	} `json:"from"`
+}
+
+// photoSize is one rendition of a photo. Telegram sends several; the last is
+// the largest.
+type photoSize struct {
+	FileID string `json:"file_id"`
 }
 
 type callbackQuery struct {
