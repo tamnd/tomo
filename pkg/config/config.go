@@ -45,11 +45,14 @@ type MCP struct {
 	Servers map[string]MCPServer `yaml:"servers"`
 }
 
-// MCPServer describes how to launch one stdio MCP server.
+// MCPServer describes one MCP server. Set command to launch it as a local
+// subprocess over stdio, or url to reach a remote one over HTTP.
 type MCPServer struct {
-	Command string            `yaml:"command"` // executable to run
+	Command string            `yaml:"command"` // executable to run for a stdio server
 	Args    []string          `yaml:"args"`    // its arguments
 	Env     map[string]string `yaml:"env"`     // extra environment for it
+	URL     string            `yaml:"url"`     // endpoint of an HTTP server
+	Headers map[string]string `yaml:"headers"` // sent on every HTTP request, for auth
 }
 
 // Voice configures speech both ways, all handled locally so no audio leaves the

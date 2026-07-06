@@ -64,7 +64,7 @@ func dialFake(t *testing.T) *Client {
 	cr, sw := io.Pipe() // client reads, server writes
 	sr, cw := io.Pipe() // server reads, client writes
 	go fakeServer(t, sr, sw)
-	c := newClient("srv", cr, cw, nil)
+	c := newClient("srv", newStreamTransport(cr, cw, nil))
 	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
