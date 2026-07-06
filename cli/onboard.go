@@ -90,10 +90,11 @@ channels:
 #   tts_model: ~/.tomo/models/en_US-amy-medium.onnx
 #   tts_bin: piper
 
-# MCP attaches Model Context Protocol servers on startup. Each one is launched
-# as a subprocess and its tools join the toolset, namespaced by the server key
-# (a filesystem tool named read becomes files_read). External tools run under
-# the exec policy, so they are gated the same as anything else.
+# MCP attaches Model Context Protocol servers on startup. Their tools join the
+# toolset, namespaced by the server key (a filesystem tool named read becomes
+# files_read). A server with a command runs as a local subprocess over stdio;
+# one with a url is reached over HTTP, with headers sent for auth. External
+# tools run under the exec policy, so they are gated the same as anything else.
 # mcp:
 #   servers:
 #     files:
@@ -104,6 +105,10 @@ channels:
 #       args: [-y, "@modelcontextprotocol/server-github"]
 #       env:
 #         GITHUB_TOKEN: ${GITHUB_TOKEN}
+#     remote:
+#       url: https://mcp.example.com/mcp
+#       headers:
+#         Authorization: Bearer ${MCP_TOKEN}
 `
 
 func newOnboardCmd() *cobra.Command {

@@ -46,5 +46,6 @@ func StartStdio(ctx context.Context, name, command string, args []string, env ma
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return newClient(name, stdout, stdin, &stdioProcess{cmd: cmd, in: stdin}), nil
+	tr := newStreamTransport(stdout, stdin, &stdioProcess{cmd: cmd, in: stdin})
+	return newClient(name, tr), nil
 }

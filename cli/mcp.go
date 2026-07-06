@@ -33,13 +33,13 @@ func dialMCP(ctx context.Context, cfg *config.Config, out io.Writer) ([]tool.Too
 	var clients []*mcp.Client
 	for _, name := range names {
 		s := servers[name]
-		if s.Command == "" {
-			fmt.Fprintf(out, "  mcp %s: no command, skipped\n", name)
-			continue
-		}
-		c, err := mcp.StartStdio(ctx, name, s.Command, s.Args, s.Env)
+		c, err := dialServer(ctx, name, s)
 		if err != nil {
 			fmt.Fprintf(out, "  mcp %s: %v\n", name, err)
+			continue
+		}
+		if c == nil {
+			fmt.Fprintf(out, "  mcp %s: no command or url, skipped\n", name)
 			continue
 		}
 		if err := c.Initialize(ctx); err != nil {
@@ -64,4 +64,18 @@ func dialMCP(ctx context.Context, cfg *config.Config, out io.Writer) ([]tool.Too
 		}
 	}
 	return tools, closer
+}
+
+// dialServer starts one server over whichever transport it names: a url means
+// HTTP, a command means a local stdio subprocess. It returns nil, nil when the
+// entry names neither.
+func dialServer(ctx context.Context, name string, s config.MCPServer) (*mcp.Client, error) {
+	switch {
+	case s.URL != "":
+		return mcp.StartHTTP(name, s.URL, s.Headers), nil
+	case s.Command != "":
+		return mcp.StartStdio(ctx, name, s.Command, s.Args, s.Env)
+	default:
+		return nil, nil
+	}
 }
