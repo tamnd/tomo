@@ -33,7 +33,19 @@ type Config struct {
 	Agent        Agent               `yaml:"agent"`
 	Policy       Policy              `yaml:"policy"`
 	Channels     Channels            `yaml:"channels"`
+	Heartbeat    Heartbeat           `yaml:"heartbeat"`
 	DataDir      string              `yaml:"data_dir"`
+}
+
+// Heartbeat runs tomo on a cadence against a checklist file, so it can pick up
+// standing work without being spoken to. It stays quiet when there is nothing
+// to report. Off unless enabled.
+type Heartbeat struct {
+	Enabled bool   `yaml:"enabled"`
+	Every   string `yaml:"every"`   // schedule spec, defaults to @every 30m
+	File    string `yaml:"file"`    // checklist to read each beat, defaults to HEARTBEAT.md in the data dir
+	Channel string `yaml:"channel"` // where to deliver anything worth saying, defaults to web
+	Chat    string `yaml:"chat"`    // chat id within that channel
 }
 
 // Channels configures the front doors serve turns on.
@@ -129,6 +141,17 @@ func (c *Config) applyDefaults() {
 	if c.DataDir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			c.DataDir = filepath.Join(home, ".tomo")
+		}
+	}
+	if c.Heartbeat.Enabled {
+		if c.Heartbeat.Every == "" {
+			c.Heartbeat.Every = "@every 30m"
+		}
+		if c.Heartbeat.File == "" {
+			c.Heartbeat.File = filepath.Join(c.DataDir, "HEARTBEAT.md")
+		}
+		if c.Heartbeat.Channel == "" {
+			c.Heartbeat.Channel = "web"
 		}
 	}
 }

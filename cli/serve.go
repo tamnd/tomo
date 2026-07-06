@@ -79,11 +79,18 @@ func newServeCmd() *cobra.Command {
 				fmt.Fprintf(out, "  channel: %s\n", ch.Name())
 			}
 
+			if hb := cfg.Heartbeat; hb.Enabled {
+				if _, err := st.EnsureJob("heartbeat", hb.Every, heartbeatPrompt(hb.File), hb.Channel, hb.Chat); err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "  heartbeat: %s over %s\n", hb.Every, hb.File)
+			}
+
 			// The scheduler pushes background results to whichever channels can
 			// post on their own.
-			posters := map[string]channel.Poster{}
+			posters := map[string]schedule.Poster{}
 			for _, ch := range channels {
-				if p, ok := ch.(channel.Poster); ok {
+				if p, ok := ch.(schedule.Poster); ok {
 					posters[ch.Name()] = p
 				}
 			}
@@ -95,6 +102,16 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "web chat listen address")
 	cmd.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
 	return cmd
+}
+
+// heartbeatPrompt is the instruction the heartbeat job runs each beat. It
+// points the agent at the checklist and asks it to stay silent when there is
+// nothing worth saying, so a quiet beat delivers nothing.
+func heartbeatPrompt(file string) string {
+	return "This is your periodic heartbeat, running on your own with no one watching. " +
+		"Read the checklist at " + file + " and take care of anything that is due or actionable now, " +
+		"using your tools. Actions that would need approval are declined while unattended, so skip those. " +
+		"If nothing needs doing, reply with nothing at all. Otherwise keep it to a short note of what you did."
 }
 
 // runChannels starts every channel plus the scheduler and blocks until the

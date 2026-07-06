@@ -87,7 +87,7 @@ func (d *Discord) allowed(channelID string) bool {
 }
 
 // Post pushes a message to a channel outside a reply, for scheduled runs. It
-// implements channel.Poster.
+// implements schedule.Poster.
 func (d *Discord) Post(ctx context.Context, chat, text string) error {
 	for _, part := range splitMessage(text, 2000) {
 		if err := d.sendMessage(ctx, chat, map[string]any{"content": part}); err != nil {

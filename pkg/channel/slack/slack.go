@@ -66,7 +66,7 @@ func (s *Slack) allowed(channelID string) bool {
 }
 
 // Post pushes a message to a channel outside a reply, for scheduled runs. It
-// implements channel.Poster.
+// implements schedule.Poster.
 func (s *Slack) Post(ctx context.Context, chat, text string) error {
 	for _, part := range splitMessage(text, 3800) {
 		if err := s.post(ctx, map[string]any{"channel": chat, "text": part}); err != nil {

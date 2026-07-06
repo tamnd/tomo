@@ -5,7 +5,9 @@ import (
 	"time"
 )
 
-// Job is one scheduled prompt. LastRun is zero until it has run once.
+// Job is one scheduled prompt. LastRun is zero until it has run once. Label is
+// empty for user jobs; a non-empty label marks a job the daemon owns and keeps
+// unique, like the heartbeat.
 type Job struct {
 	ID      int64
 	Spec    string
@@ -15,6 +17,7 @@ type Job struct {
 	Enabled bool
 	LastRun time.Time
 	Created time.Time
+	Label   string
 }
 
 // Run is one recorded execution of a job.
@@ -38,9 +41,30 @@ func (s *Store) AddJob(spec, prompt, channel, chat string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// EnsureJob upserts a labelled job the daemon owns, keyed on label. On first
+// call it inserts and returns the new id; later it refreshes the spec, prompt,
+// channel, and chat so config changes take effect without duplicating the job.
+// It never resets last_run, so catch-up still works across restarts.
+func (s *Store) EnsureJob(label, spec, prompt, channel, chat string) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(
+		`INSERT INTO cron_jobs (spec, prompt, channel, chat, enabled, created_at, label)
+		 VALUES (?, ?, ?, ?, 1, ?, ?)
+		 ON CONFLICT(label) WHERE label != '' DO UPDATE SET
+		   spec = excluded.spec, prompt = excluded.prompt,
+		   channel = excluded.channel, chat = excluded.chat`,
+		spec, prompt, channel, chat, now, label)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = s.db.QueryRow(`SELECT id FROM cron_jobs WHERE label = ?`, label).Scan(&id)
+	return id, err
+}
+
 // Jobs lists every job, oldest first.
 func (s *Store) Jobs() ([]Job, error) {
-	rows, err := s.db.Query(`SELECT id, spec, prompt, channel, chat, enabled, last_run, created_at FROM cron_jobs ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, spec, prompt, channel, chat, enabled, last_run, created_at, label FROM cron_jobs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +74,7 @@ func (s *Store) Jobs() ([]Job, error) {
 
 // EnabledJobs lists only the jobs the scheduler should consider.
 func (s *Store) EnabledJobs() ([]Job, error) {
-	rows, err := s.db.Query(`SELECT id, spec, prompt, channel, chat, enabled, last_run, created_at FROM cron_jobs WHERE enabled = 1 ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, spec, prompt, channel, chat, enabled, last_run, created_at, label FROM cron_jobs WHERE enabled = 1 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +144,7 @@ func scanJobs(rows *sql.Rows) ([]Job, error) {
 		var j Job
 		var enabled int
 		var lastRun, created string
-		if err := rows.Scan(&j.ID, &j.Spec, &j.Prompt, &j.Channel, &j.Chat, &enabled, &lastRun, &created); err != nil {
+		if err := rows.Scan(&j.ID, &j.Spec, &j.Prompt, &j.Channel, &j.Chat, &enabled, &lastRun, &created, &j.Label); err != nil {
 			return nil, err
 		}
 		j.Enabled = enabled != 0
