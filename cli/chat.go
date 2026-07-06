@@ -17,6 +17,7 @@ import (
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
+	"github.com/tamnd/tomo/pkg/skill"
 	"github.com/tamnd/tomo/pkg/store"
 	"github.com/tamnd/tomo/pkg/tool"
 )
@@ -89,14 +90,22 @@ func buildAgent(cfg *config.Config, model string, guard agent.Gate) (*agent.Agen
 	if err != nil {
 		return nil, "", err
 	}
+	skills := &skill.Store{Dir: filepath.Join(cfg.DataDir, "skills")}
+	skillIndex, err := skills.Index()
+	if err != nil {
+		return nil, "", err
+	}
 	reg := tool.NewRegistry(builtin.All()...)
 	for _, t := range mem.Tools() {
+		reg.Add(t)
+	}
+	for _, t := range skills.Tools() {
 		reg.Add(t)
 	}
 	a := &agent.Agent{
 		Provider:  p,
 		Model:     modelID,
-		System:    agent.SystemPrompt(time.Now(), index),
+		System:    agent.SystemPrompt(time.Now(), index, skillIndex),
 		Tools:     reg,
 		Gate:      guard,
 		MaxTokens: cfg.Agent.MaxTokens,

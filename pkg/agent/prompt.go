@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// SystemPrompt assembles tomo's identity plus whatever memory index the
-// caller has. Kept small on purpose: memory topics and skills load on demand,
-// not here.
-func SystemPrompt(now time.Time, memoryIndex string) string {
+// SystemPrompt assembles tomo's identity plus whatever memory and skills
+// indexes the caller has. Kept small on purpose: memory topics and skill bodies
+// load on demand, not here.
+func SystemPrompt(now time.Time, memoryIndex, skillsIndex string) string {
 	var b strings.Builder
 	b.WriteString("You are tomo (友), a personal AI agent that lives on your user's own machine.\n")
 	b.WriteString("You are talking with your user over a chat channel. Be direct, warm, and brief; this is a conversation, not a report.\n")
@@ -18,6 +18,11 @@ func SystemPrompt(now time.Time, memoryIndex string) string {
 	if memoryIndex != "" {
 		b.WriteString("\nYour memory index (details live in topic files you can read):\n")
 		b.WriteString(memoryIndex)
+		b.WriteString("\n")
+	}
+	if skillsIndex != "" {
+		b.WriteString("\nYour skills (read one with skill_read before following it):\n")
+		b.WriteString(skillsIndex)
 		b.WriteString("\n")
 	}
 	return b.String()
