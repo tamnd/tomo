@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/tamnd/tomo/pkg/channel"
 	"github.com/tamnd/tomo/pkg/store"
 )
 
@@ -12,12 +11,20 @@ import (
 // assistant's text. The router supplies it.
 type RunFunc func(ctx context.Context, channel, chat, prompt string) (string, error)
 
+// Poster pushes a message to a chat on its own, outside a reply. The scheduler
+// needs it to deliver background results. A front door that can only answer
+// when spoken to (the web chat, which has no durable client to push to) simply
+// does not provide one, and its jobs run and record but deliver nothing.
+type Poster interface {
+	Post(ctx context.Context, chat, text string) error
+}
+
 // Scheduler ticks once a minute, runs the jobs that have come due, records each
 // run, and delivers any output to the job's channel.
 type Scheduler struct {
 	store   *store.Store
 	run     RunFunc
-	posters map[string]channel.Poster
+	posters map[string]Poster
 	now     func() time.Time
 	tick    time.Duration
 }
@@ -25,7 +32,7 @@ type Scheduler struct {
 // New builds a scheduler. posters maps a channel name to the thing that can
 // push a message there; a job whose channel has no poster still runs and is
 // recorded, its output just is not delivered.
-func New(st *store.Store, run RunFunc, posters map[string]channel.Poster) *Scheduler {
+func New(st *store.Store, run RunFunc, posters map[string]Poster) *Scheduler {
 	return &Scheduler{store: st, run: run, posters: posters, now: time.Now, tick: time.Minute}
 }
 

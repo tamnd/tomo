@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -50,8 +51,10 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 	chat       TEXT NOT NULL,
 	enabled    INTEGER NOT NULL DEFAULT 1,
 	last_run   TEXT NOT NULL DEFAULT '',
-	created_at TEXT NOT NULL
+	created_at TEXT NOT NULL,
+	label      TEXT NOT NULL DEFAULT ''
 );
+CREATE UNIQUE INDEX IF NOT EXISTS cron_jobs_label ON cron_jobs(label) WHERE label != '';
 CREATE TABLE IF NOT EXISTS cron_runs (
 	id         INTEGER PRIMARY KEY,
 	job_id     INTEGER NOT NULL,
@@ -73,7 +76,25 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate brings an older ledger up to the current schema. Each step is safe to
+// run again: a column that already exists is left alone.
+func migrate(db *sql.DB) error {
+	// label was added after cron_jobs first shipped.
+	if _, err := db.Exec(`ALTER TABLE cron_jobs ADD COLUMN label TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column name") {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS cron_jobs_label ON cron_jobs(label) WHERE label != ''`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Close releases the handle.

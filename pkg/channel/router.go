@@ -10,6 +10,7 @@ import (
 	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
+	"github.com/tamnd/tomo/pkg/schedule"
 	"github.com/tamnd/tomo/pkg/store"
 )
 
@@ -72,6 +73,7 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	}
 	a := *base
 	a.Gate = policy.NewGuard(r.engine, x.Approver, r.auditor)
+	a.Tools.Add(schedule.Tool(r.store, x.Channel, x.In.Chat))
 
 	turn, err := a.Turn(ctx, history, x.In.Message(), &replySink{r: x.Reply})
 	if perr := r.store.Append(sess.ID, turn); perr != nil {
@@ -119,6 +121,7 @@ func (r *Router) Background(ctx context.Context, ch, chat, prompt string) (strin
 	}
 	a := *base
 	a.Gate = policy.NewGuard(r.engine, denyApprover{}, r.auditor)
+	a.Tools.Add(schedule.Tool(r.store, ch, chat))
 
 	var buf strings.Builder
 	turn, err := a.Turn(ctx, history, provider.UserText(prompt), &textSink{&buf})

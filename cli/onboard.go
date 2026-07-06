@@ -65,6 +65,18 @@ channels:
   # imessage:        # macOS only, needs Full Disk Access
   #   enabled: true
   #   allow_handles: ["+15555550123"]
+
+# The heartbeat runs tomo on a cadence against a checklist, so it can pick up
+# standing work without being spoken to. It stays quiet when there is nothing
+# worth saying. Background runs cannot get approval, so anything gated to 'ask'
+# is declined while unattended. Point channel/chat at a poster (telegram and
+# the rest) to have results delivered; the web chat has nowhere to push.
+# heartbeat:
+#   enabled: true
+#   every: "@every 30m"
+#   file: ~/.tomo/HEARTBEAT.md
+#   channel: telegram
+#   chat: "123456789"
 `
 
 func newOnboardCmd() *cobra.Command {

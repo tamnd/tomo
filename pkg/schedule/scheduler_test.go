@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tamnd/tomo/pkg/channel"
 	"github.com/tamnd/tomo/pkg/store"
 )
 
@@ -58,7 +57,7 @@ func TestDueJobRunsAndPosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := New(st, run, map[string]channel.Poster{"web": poster})
+	s := New(st, run, map[string]Poster{"web": poster})
 	s.checkDue(context.Background())
 
 	if ran != 1 {
@@ -115,7 +114,7 @@ func TestEmptyOutputStaysQuiet(t *testing.T) {
 	id, _ := st.AddJob("@every 1m", "heartbeat", "web", "c1")
 	_ = st.MarkRun(id, time.Now().Add(-2*time.Minute))
 
-	New(st, run, map[string]channel.Poster{"web": poster}).checkDue(context.Background())
+	New(st, run, map[string]Poster{"web": poster}).checkDue(context.Background())
 	if got := poster.all(); len(got) != 0 {
 		t.Errorf("empty output should post nothing, got %v", got)
 	}

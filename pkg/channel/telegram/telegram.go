@@ -61,7 +61,7 @@ func (t *Telegram) allowed(chatID int64) bool {
 }
 
 // Post pushes a message to a chat outside a reply, for scheduled runs. It
-// implements channel.Poster.
+// implements schedule.Poster.
 func (t *Telegram) Post(ctx context.Context, chat, text string) error {
 	id, err := strconv.ParseInt(chat, 10, 64)
 	if err != nil {

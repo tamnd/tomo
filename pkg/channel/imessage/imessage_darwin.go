@@ -128,7 +128,7 @@ func (m *IMessage) onMessage(ctx context.Context, msg imsg) {
 }
 
 // Post pushes a message to a handle outside a reply, for scheduled runs. It
-// implements channel.Poster.
+// implements schedule.Poster.
 func (m *IMessage) Post(_ context.Context, chat, text string) error {
 	return m.deliver(chat, text)
 }

@@ -67,11 +67,3 @@ type Channel interface {
 	Caps() Caps
 	Run(ctx context.Context, h Handler) error
 }
-
-// Poster is the optional half of a channel that can push a message to a chat
-// on its own, outside a reply. The scheduler needs it to deliver background
-// results. A channel that can only answer when spoken to (the web chat, which
-// has no durable client to push to) simply does not implement it.
-type Poster interface {
-	Post(ctx context.Context, chat, text string) error
-}
