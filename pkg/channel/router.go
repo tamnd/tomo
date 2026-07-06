@@ -28,15 +28,17 @@ type Router struct {
 	auditor     policy.Auditor
 	newAgent    AgentFunc
 	transcriber voice.Transcriber // nil means voice notes cannot be transcribed
+	synth       voice.Synthesizer // nil means replies are never spoken
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
 
-// NewRouter wires a router. transcriber may be nil, in which case a voice note
-// is acknowledged but not understood.
-func NewRouter(st *store.Store, engine *policy.Engine, auditor policy.Auditor, newAgent AgentFunc, transcriber voice.Transcriber) *Router {
-	return &Router{store: st, engine: engine, auditor: auditor, newAgent: newAgent, transcriber: transcriber, locks: map[string]*sync.Mutex{}}
+// NewRouter wires a router. transcriber and synth may each be nil: without a
+// transcriber a voice note is acknowledged but not understood, and without a
+// synth a reply is never spoken back.
+func NewRouter(st *store.Store, engine *policy.Engine, auditor policy.Auditor, newAgent AgentFunc, transcriber voice.Transcriber, synth voice.Synthesizer) *Router {
+	return &Router{store: st, engine: engine, auditor: auditor, newAgent: newAgent, transcriber: transcriber, synth: synth, locks: map[string]*sync.Mutex{}}
 }
 
 // HandlerFor returns the Handler for a channel by name.
@@ -80,13 +82,64 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	a.Gate = policy.NewGuard(r.engine, x.Approver, r.auditor)
 	a.Tools.Add(schedule.Tool(r.store, x.Channel, x.In.Chat))
 
-	turn, err := a.Turn(ctx, history, x.In.Message(), &replySink{r: x.Reply})
+	sink := &replySink{r: x.Reply}
+	turn, err := a.Turn(ctx, history, x.In.Message(), sink)
 	if perr := r.store.Append(sess.ID, turn); perr != nil {
 		x.Reply.Notice("ledger write failed: " + perr.Error())
 	}
 	if err != nil && ctx.Err() == nil {
 		x.Reply.Notice("error: " + err.Error())
 	}
+	if err == nil && ctx.Err() == nil {
+		r.speak(ctx, x, sink.said.String())
+	}
+}
+
+// speak sends the reply back as a voice note when the user spoke first and the
+// channel can carry audio out. It is reciprocal on purpose: someone who talks
+// to tomo hears it talk back, while a typed conversation stays text. A failed
+// synthesis is noted, not fatal; the text reply already went out.
+func (r *Router) speak(ctx context.Context, x Exchange, text string) {
+	if r.synth == nil || len(x.In.Audio) == 0 {
+		return
+	}
+	vr, ok := x.Reply.(VoiceReply)
+	if !ok {
+		return
+	}
+	if text = speakable(text); text == "" {
+		return
+	}
+	audio, ext, err := r.synth.Synthesize(ctx, text)
+	if err != nil {
+		x.Reply.Notice("· could not speak the reply: " + err.Error())
+		return
+	}
+	vr.Voice(Clip{Data: audio, Ext: ext})
+}
+
+// speakable trims a reply down to something worth reading aloud: fenced code
+// blocks are dropped, since a wall of code makes for a miserable voice note,
+// and the result is capped so a long answer does not turn into a long recording.
+func speakable(text string) string {
+	var b strings.Builder
+	infence := false
+	for line := range strings.SplitSeq(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			infence = !infence
+			continue
+		}
+		if infence {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	out := strings.TrimSpace(b.String())
+	if len(out) > 1200 {
+		out = strings.TrimSpace(out[:1200]) + "…"
+	}
+	return out
 }
 
 // foldAudio transcribes any voice notes on the message and folds the text into
@@ -223,12 +276,17 @@ func (r *Router) lock(key string) func() {
 }
 
 // replySink adapts a Reply to the agent's Sink: streamed text becomes chunks,
-// tool activity becomes notices.
+// tool activity becomes notices. It also keeps the assistant text so the router
+// can speak the finished reply.
 type replySink struct {
-	r Reply
+	r    Reply
+	said strings.Builder
 }
 
-func (s *replySink) Text(t string) { s.r.Chunk(t) }
+func (s *replySink) Text(t string) {
+	s.said.WriteString(t)
+	s.r.Chunk(t)
+}
 
 func (s *replySink) ToolStart(name string, input json.RawMessage) {
 	in := string(input)

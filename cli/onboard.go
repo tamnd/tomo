@@ -78,13 +78,17 @@ channels:
 #   channel: telegram
 #   chat: "123456789"
 
-# Voice notes are transcribed on this machine with whisper.cpp, so no audio
-# leaves the box. Set a model path to turn it on; bin and ffmpeg default to
-# whisper-cli and ffmpeg on PATH. ffmpeg decodes non-wav clips (most are).
+# Voice runs both ways on this machine, so no audio leaves the box. Set model
+# to transcribe inbound voice notes with whisper.cpp; set tts_model to speak
+# replies back with piper, sent as a voice note wherever you spoke first. bin,
+# tts_bin, and ffmpeg default to whisper-cli, piper, and ffmpeg on PATH; ffmpeg
+# decodes inbound clips and encodes the spoken reply to opus.
 # voice:
 #   model: ~/.tomo/models/ggml-base.en.bin
 #   bin: whisper-cli
 #   ffmpeg: ffmpeg
+#   tts_model: ~/.tomo/models/en_US-amy-medium.onnx
+#   tts_bin: piper
 `
 
 func newOnboardCmd() *cobra.Command {

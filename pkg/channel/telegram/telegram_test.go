@@ -206,3 +206,46 @@ func TestDispatchVoiceBecomesAudio(t *testing.T) {
 		t.Fatal("handler never ran")
 	}
 }
+
+func TestSendVoiceUploadsAsVoiceNote(t *testing.T) {
+	var path, field string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = r.ParseMultipartForm(1 << 20)
+		if r.MultipartForm != nil {
+			for f := range r.MultipartForm.File {
+				field = f
+			}
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	tg := &Telegram{Token: "x", BaseURL: srv.URL, Client: srv.Client()}
+	if err := tg.sendVoice(context.Background(), 42, []byte("opus"), ".ogg"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "/sendVoice") {
+		t.Errorf("path = %q, want a sendVoice call", path)
+	}
+	if field != "voice" {
+		t.Errorf("file field = %q, want voice", field)
+	}
+}
+
+func TestSendVoiceFallsBackToAudio(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	tg := &Telegram{Token: "x", BaseURL: srv.URL, Client: srv.Client()}
+	if err := tg.sendVoice(context.Background(), 42, []byte("wav"), ".wav"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "/sendAudio") {
+		t.Errorf("path = %q, a non-ogg clip should fall back to sendAudio", path)
+	}
+}

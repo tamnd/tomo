@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"slices"
@@ -233,6 +234,11 @@ func (r *tgReply) Done() {
 	}
 }
 
+// Voice sends a spoken reply as a Telegram voice note.
+func (r *tgReply) Voice(clip channel.Clip) {
+	_ = r.tg.sendVoice(r.ctx, r.chatID, clip.Data, clip.Ext)
+}
+
 // tgApprover asks with an inline keyboard and waits for the button press.
 type tgApprover struct {
 	tg     *Telegram
@@ -371,6 +377,46 @@ func (t *Telegram) call(ctx context.Context, method string, body map[string]any)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	resp, err := t.client().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
+		return fmt.Errorf("telegram %s: %s: %s", method, resp.Status, strings.TrimSpace(string(msg)))
+	}
+	return nil
+}
+
+// sendVoice uploads an audio clip. An opus/ogg clip goes as a real voice note;
+// anything else falls back to sendAudio so the user still gets a playable file.
+func (t *Telegram) sendVoice(ctx context.Context, chatID int64, data []byte, ext string) error {
+	method, field := "sendVoice", "voice"
+	if ext != ".ogg" {
+		method, field = "sendAudio", "audio"
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
+		return err
+	}
+	fw, err := mw.CreateFormFile(field, "reply"+ext)
+	if err != nil {
+		return err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.method(method), &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := t.client().Do(req)
 	if err != nil {
 		return err

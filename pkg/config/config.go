@@ -38,13 +38,16 @@ type Config struct {
 	DataDir      string              `yaml:"data_dir"`
 }
 
-// Voice configures inbound speech transcription with whisper.cpp. It is off
-// until a model path is set. Voice notes are then transcribed locally, so no
-// audio leaves the machine.
+// Voice configures speech both ways, all handled locally so no audio leaves the
+// machine. Setting model turns on transcription of inbound voice notes with
+// whisper.cpp; setting tts_model turns on spoken replies with piper, sent back
+// as a voice note wherever the user spoke first.
 type Voice struct {
-	Model  string `yaml:"model"`  // path to a ggml whisper model; setting it enables voice-in
-	Bin    string `yaml:"bin"`    // whisper.cpp cli, defaults to whisper-cli
-	FFmpeg string `yaml:"ffmpeg"` // decoder for non-wav clips, defaults to ffmpeg
+	Model    string `yaml:"model"`     // path to a ggml whisper model; setting it enables voice-in
+	Bin      string `yaml:"bin"`       // whisper.cpp cli, defaults to whisper-cli
+	FFmpeg   string `yaml:"ffmpeg"`    // ffmpeg for decode and opus encode, defaults to ffmpeg
+	TTSModel string `yaml:"tts_model"` // path to a piper voice model; setting it enables voice-out
+	TTSBin   string `yaml:"tts_bin"`   // piper cli, defaults to piper
 }
 
 // Heartbeat runs tomo on a cadence against a checklist file, so it can pick up

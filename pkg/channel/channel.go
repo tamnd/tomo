@@ -58,6 +58,14 @@ type Reply interface {
 	Done()
 }
 
+// VoiceReply is an optional capability a Reply may also implement: it can send
+// a synthesized audio clip back. The router calls it when it has spoken a reply
+// and the channel can carry audio out. A channel that cannot just leaves it
+// unimplemented and the reply stays text only.
+type VoiceReply interface {
+	Voice(clip Clip)
+}
+
 // Exchange bundles one inbound message with the channel-side handles the
 // router needs to answer it.
 type Exchange struct {
