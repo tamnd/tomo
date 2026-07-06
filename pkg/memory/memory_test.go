@@ -42,6 +42,33 @@ func TestSaveIndexRead(t *testing.T) {
 	}
 }
 
+func TestSaveNotedStampsProvenance(t *testing.T) {
+	m := &Memory{Dir: t.TempDir()}
+	err := m.SaveNoted("gym", "Trains mornings", "Prefers a 07:00 workout.",
+		Provenance{Source: "curator", From: "telegram:42", On: "2026-07-06"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := m.Read("gym")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "Prefers a 07:00 workout.") {
+		t.Errorf("body dropped: %q", body)
+	}
+	if !strings.Contains(body, "source: curator, from telegram:42, 2026-07-06") {
+		t.Errorf("provenance missing: %q", body)
+	}
+	// A plain Save adds no stamp.
+	if err := m.Save("plain", "t", "just a fact"); err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := m.Read("plain")
+	if strings.Contains(plain, "source:") {
+		t.Errorf("plain save should carry no provenance: %q", plain)
+	}
+}
+
 func TestSlugValidation(t *testing.T) {
 	m := &Memory{Dir: t.TempDir()}
 	for _, bad := range []string{"", "UPPER", "has space", "../escape", "a/b", "-lead"} {

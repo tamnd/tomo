@@ -14,6 +14,7 @@ import (
 	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/builtin"
 	"github.com/tamnd/tomo/pkg/config"
+	"github.com/tamnd/tomo/pkg/curator"
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
@@ -116,6 +117,26 @@ func buildAgent(cfg *config.Config, model string, guard agent.Gate, extra ...too
 		MaxTurns:  cfg.Agent.MaxTurns,
 	}
 	return a, name + "/" + modelID, nil
+}
+
+// buildCurator wires the reflection pass: same provider and model the agent
+// uses, writing into the same memory dir. serve attaches it so memory settles
+// after substantial turns without the user having to ask.
+func buildCurator(cfg *config.Config, model string) (*curator.Curator, error) {
+	name, modelID, pc, err := cfg.Resolve(model)
+	if err != nil {
+		return nil, err
+	}
+	p, err := provider.Build(pc)
+	if err != nil {
+		return nil, fmt.Errorf("provider %s: %w", name, err)
+	}
+	return &curator.Curator{
+		Provider:  p,
+		Model:     modelID,
+		Memory:    &memory.Memory{Dir: filepath.Join(cfg.DataDir, "memory")},
+		MaxTokens: cfg.Agent.MaxTokens,
+	}, nil
 }
 
 // buildGuard wires the policy engine, the given approver, and a file auditor.

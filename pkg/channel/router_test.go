@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/tamnd/tomo/pkg/agent"
+	"github.com/tamnd/tomo/pkg/curator"
+	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/store"
@@ -353,6 +355,59 @@ func TestRouterApprovalAndToolNotice(t *testing.T) {
 	joined := strings.Join(rep.notices, "\n")
 	if !strings.Contains(joined, "write_file") {
 		t.Errorf("notices = %v", rep.notices)
+	}
+}
+
+func TestRouterRunsCuratorAfterSubstantialTurn(t *testing.T) {
+	// A turn that reaches for a tool is substantial, so the curator runs after
+	// it and settles a fact into memory.
+	echoTool := tool.Tool{
+		Name: "echo", Class: tool.ClassRead,
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Run:    func(context.Context, json.RawMessage) (string, error) { return "echoed", nil },
+	}
+	r, _, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{{Type: provider.BlockToolUse, ID: "t1", Name: "echo", Input: json.RawMessage(`{}`)}}, StopReason: provider.StopToolUse},
+		{Blocks: []provider.Block{provider.Text("all set")}, StopReason: provider.StopEndTurn},
+	}, echoTool)
+
+	mem := &memory.Memory{Dir: t.TempDir()}
+	curatorProvider := &scriptProvider{responses: []*provider.Response{
+		{Blocks: []provider.Block{{Type: provider.BlockToolUse, ID: "c1", Name: "memory_write", Input: json.RawMessage(`{"slug":"likes-echo","title":"Likes echoes","body":"Asked for an echo."}`)}}, StopReason: provider.StopToolUse},
+		{Blocks: []provider.Block{provider.Text("curated")}, StopReason: provider.StopEndTurn},
+	}}
+	r.Curate(&curator.Curator{Provider: curatorProvider, Model: "m", Memory: mem})
+
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In: Inbound{Chat: "c", Text: "echo please"}, Reply: &captureReply{}, Approver: &yesApprover{},
+	})
+	r.WaitIdle()
+
+	body, err := mem.Read("likes-echo")
+	if err != nil {
+		t.Fatalf("curator did not write memory: %v", err)
+	}
+	if !strings.Contains(body, "Asked for an echo.") || !strings.Contains(body, "source: curator") {
+		t.Errorf("memory = %q", body)
+	}
+}
+
+func TestRouterSkipsCuratorForTrivialTurn(t *testing.T) {
+	r, _, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("hi")}, StopReason: provider.StopEndTurn},
+	})
+	mem := &memory.Memory{Dir: t.TempDir()}
+	// The curator provider has no scripted responses: if the curator ran, it
+	// would panic on the empty script, so this also proves it did not run.
+	r.Curate(&curator.Curator{Provider: &scriptProvider{}, Model: "m", Memory: mem})
+
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In: Inbound{Chat: "c", Text: "hi"}, Reply: &captureReply{}, Approver: &yesApprover{},
+	})
+	r.WaitIdle()
+
+	if idx, _ := mem.Index(); idx != "" {
+		t.Errorf("trivial turn should not curate, got index %q", idx)
 	}
 }
 
