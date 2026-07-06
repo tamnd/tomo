@@ -93,8 +93,9 @@ channels:
 # MCP attaches Model Context Protocol servers on startup. Their tools join the
 # toolset, namespaced by the server key (a filesystem tool named read becomes
 # files_read). A server with a command runs as a local subprocess over stdio;
-# one with a url is reached over HTTP, with headers sent for auth. External
-# tools run under the exec policy, so they are gated the same as anything else.
+# one with a url is reached over HTTP, with headers sent for auth. These tools
+# are not tomo's own code, so they default to ask even when their class would
+# run; add a policy.rules entry to allow one you trust.
 # mcp:
 #   servers:
 #     files:

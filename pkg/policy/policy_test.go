@@ -56,6 +56,34 @@ func TestPerToolRuleWinsAndIsNotEscalated(t *testing.T) {
 	}
 }
 
+func TestExternalDefaultsToAsk(t *testing.T) {
+	e := New(Config{})
+	e.MarkExternal("srv_echo", "reddit_user")
+
+	// A read from an external tool would normally allow, but external pulls it
+	// to ask.
+	if got, reason := e.Decide("srv_echo", tool.ClassRead, false); got != Ask {
+		t.Errorf("external read = %s (%s), want ask", got, reason)
+	}
+	if got, _ := e.Decide("reddit_user", tool.ClassNet, false); got != Ask {
+		t.Errorf("external net = %s, want ask", got)
+	}
+	// A tomo tool of the same class is unaffected.
+	if got, _ := e.Decide("read_file", tool.ClassRead, false); got != Allow {
+		t.Errorf("builtin read = %s, want allow", got)
+	}
+}
+
+func TestExternalRuleWins(t *testing.T) {
+	// A user who trusts one external tool can allow it outright; the rule wins
+	// over the external default.
+	e := New(Config{Rules: map[string]string{"srv_echo": "allow"}})
+	e.MarkExternal("srv_echo")
+	if got, _ := e.Decide("srv_echo", tool.ClassRead, false); got != Allow {
+		t.Errorf("explicit allow should beat external default, got %s", got)
+	}
+}
+
 func TestUnknownClassFailsClosed(t *testing.T) {
 	e := New(Config{})
 	if got, _ := e.Decide("weird", tool.Class("mystery"), false); got != Ask {
