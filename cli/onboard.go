@@ -97,7 +97,7 @@ func newOnboardCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 
 			dir := filepath.Dir(path)
-			for _, d := range []string{dir, filepath.Join(dir, "memory")} {
+			for _, d := range []string{dir, filepath.Join(dir, "memory"), filepath.Join(dir, "skills")} {
 				if err := os.MkdirAll(d, 0o755); err != nil {
 					return err
 				}
