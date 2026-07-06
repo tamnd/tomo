@@ -16,6 +16,7 @@ import (
 	"github.com/tamnd/tomo/pkg/channel/telegram"
 	"github.com/tamnd/tomo/pkg/channel/webchat"
 	"github.com/tamnd/tomo/pkg/policy"
+	"github.com/tamnd/tomo/pkg/schedule"
 	"github.com/tamnd/tomo/pkg/store"
 )
 
@@ -77,7 +78,18 @@ func newServeCmd() *cobra.Command {
 			for _, ch := range channels {
 				fmt.Fprintf(out, "  channel: %s\n", ch.Name())
 			}
-			return runChannels(cmd, router, channels)
+
+			// The scheduler pushes background results to whichever channels can
+			// post on their own.
+			posters := map[string]channel.Poster{}
+			for _, ch := range channels {
+				if p, ok := ch.(channel.Poster); ok {
+					posters[ch.Name()] = p
+				}
+			}
+			sched := schedule.New(st, router.Background, posters)
+
+			return runChannels(cmd, router, sched, channels)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "web chat listen address")
@@ -85,21 +97,24 @@ func newServeCmd() *cobra.Command {
 	return cmd
 }
 
-// runChannels starts every channel and blocks until the context is cancelled.
-// The first channel error is returned after all have stopped.
-func runChannels(cmd *cobra.Command, router *channel.Router, channels []channel.Channel) error {
+// runChannels starts every channel plus the scheduler and blocks until the
+// context is cancelled. The first error is returned after all have stopped.
+func runChannels(cmd *cobra.Command, router *channel.Router, sched *schedule.Scheduler, channels []channel.Channel) error {
 	ctx := cmd.Context()
 	var wg sync.WaitGroup
-	errs := make(chan error, len(channels))
+	errs := make(chan error, len(channels)+1)
 	for _, ch := range channels {
-		wg.Add(1)
-		go func(c channel.Channel) {
-			defer wg.Done()
-			if err := c.Run(ctx, router.HandlerFor(c.Name())); err != nil {
-				errs <- fmt.Errorf("%s: %w", c.Name(), err)
+		wg.Go(func() {
+			if err := ch.Run(ctx, router.HandlerFor(ch.Name())); err != nil {
+				errs <- fmt.Errorf("%s: %w", ch.Name(), err)
 			}
-		}(ch)
+		})
 	}
+	wg.Go(func() {
+		if err := sched.Run(ctx); err != nil {
+			errs <- fmt.Errorf("scheduler: %w", err)
+		}
+	})
 	wg.Wait()
 	close(errs)
 	return <-errs

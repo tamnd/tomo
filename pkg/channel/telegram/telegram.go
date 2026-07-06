@@ -60,6 +60,21 @@ func (t *Telegram) allowed(chatID int64) bool {
 	return slices.Contains(t.Allow, chatID)
 }
 
+// Post pushes a message to a chat outside a reply, for scheduled runs. It
+// implements channel.Poster.
+func (t *Telegram) Post(ctx context.Context, chat, text string) error {
+	id, err := strconv.ParseInt(chat, 10, 64)
+	if err != nil {
+		return err
+	}
+	for _, part := range splitMessage(text, 4096) {
+		if err := t.send(ctx, id, part, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Run long-polls until ctx is cancelled.
 func (t *Telegram) Run(ctx context.Context, h channel.Handler) error {
 	t.handler = h

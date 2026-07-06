@@ -31,3 +31,8 @@ func (m *IMessage) Caps() channel.Caps { return channel.Caps{} }
 func (m *IMessage) Run(context.Context, channel.Handler) error {
 	return errors.New("imessage channel is only available on macOS")
 }
+
+// Post reports that iMessage is macOS only.
+func (m *IMessage) Post(context.Context, string, string) error {
+	return errors.New("imessage channel is only available on macOS")
+}

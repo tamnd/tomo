@@ -9,6 +9,7 @@ import (
 
 	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/policy"
+	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/store"
 )
 
@@ -85,11 +86,60 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 // any, otherwise the channel-scoped default. Binding is how one conversation
 // becomes reachable from more than one channel.
 func (r *Router) sessionKey(x Exchange) string {
-	if name, ok, err := r.store.BindingFor(x.Channel, x.In.Chat); err == nil && ok {
+	return r.sessionKeyFor(x.Channel, x.In.Chat)
+}
+
+func (r *Router) sessionKeyFor(ch, chat string) string {
+	if name, ok, err := r.store.BindingFor(ch, chat); err == nil && ok {
 		return name
 	}
-	return x.Channel + ":" + x.In.Chat
+	return ch + ":" + chat
 }
+
+// Background runs a one-off prompt as a turn in the chat's session and returns
+// the assistant's text, for the scheduler to deliver. No one is watching, so
+// any tool call that would ask for approval is declined; the rest of the policy
+// stays in force.
+func (r *Router) Background(ctx context.Context, ch, chat, prompt string) (string, error) {
+	key := r.sessionKeyFor(ch, chat)
+	unlock := r.lock(key)
+	defer unlock()
+
+	sess, err := r.store.Session(key, ch)
+	if err != nil {
+		return "", err
+	}
+	history, err := r.store.Messages(sess.ID)
+	if err != nil {
+		return "", err
+	}
+	base, err := r.newAgent()
+	if err != nil {
+		return "", err
+	}
+	a := *base
+	a.Gate = policy.NewGuard(r.engine, denyApprover{}, r.auditor)
+
+	var buf strings.Builder
+	turn, err := a.Turn(ctx, history, provider.UserText(prompt), &textSink{&buf})
+	if perr := r.store.Append(sess.ID, turn); perr != nil && err == nil {
+		err = perr
+	}
+	return strings.TrimSpace(buf.String()), err
+}
+
+// denyApprover refuses every ask. A background run has no one to prompt, so
+// fail closed rather than block or silently allow.
+type denyApprover struct{}
+
+func (denyApprover) Approve(context.Context, policy.Request) (bool, error) { return false, nil }
+
+// textSink collects streamed assistant text and ignores tool activity.
+type textSink struct{ buf *strings.Builder }
+
+func (s *textSink) Text(t string)                     { s.buf.WriteString(t) }
+func (s *textSink) ToolStart(string, json.RawMessage) {}
+func (s *textSink) ToolEnd(string, string, bool)      {}
 
 // command intercepts the small set of control messages the router answers
 // itself, before any model call. It returns true when it handled the message.
