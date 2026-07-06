@@ -249,3 +249,45 @@ func TestSendVoiceFallsBackToAudio(t *testing.T) {
 		t.Errorf("path = %q, a non-ogg clip should fall back to sendAudio", path)
 	}
 }
+
+func TestSendFilePhotoForImage(t *testing.T) {
+	var path, caption string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = r.ParseMultipartForm(1 << 20)
+		if r.MultipartForm != nil {
+			caption = r.FormValue("caption")
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	tg := &Telegram{Token: "x", BaseURL: srv.URL, Client: srv.Client()}
+	err := tg.sendFile(context.Background(), 7, channel.Attachment{Name: "chart.png", Mime: "image/png", Data: []byte("png"), Caption: "look"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "/sendPhoto") {
+		t.Errorf("path = %q, an image should go as a photo", path)
+	}
+	if caption != "look" {
+		t.Errorf("caption = %q", caption)
+	}
+}
+
+func TestSendFileDocumentForOther(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	tg := &Telegram{Token: "x", BaseURL: srv.URL, Client: srv.Client()}
+	if err := tg.sendFile(context.Background(), 7, channel.Attachment{Name: "notes.pdf", Mime: "application/pdf", Data: []byte("%PDF")}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "/sendDocument") {
+		t.Errorf("path = %q, a non-image should go as a document", path)
+	}
+}

@@ -81,6 +81,7 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	a := *base
 	a.Gate = policy.NewGuard(r.engine, x.Approver, r.auditor)
 	a.Tools.Add(schedule.Tool(r.store, x.Channel, x.In.Chat))
+	a.Tools.Add(attachTool(x.Reply))
 
 	sink := &replySink{r: x.Reply}
 	turn, err := a.Turn(ctx, history, x.In.Message(), sink)

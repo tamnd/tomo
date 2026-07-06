@@ -239,6 +239,11 @@ func (r *tgReply) Voice(clip channel.Clip) {
 	_ = r.tg.sendVoice(r.ctx, r.chatID, clip.Data, clip.Ext)
 }
 
+// File sends a produced file: an image as a photo, anything else as a document.
+func (r *tgReply) File(a channel.Attachment) {
+	_ = r.tg.sendFile(r.ctx, r.chatID, a)
+}
+
 // tgApprover asks with an inline keyboard and waits for the button press.
 type tgApprover struct {
 	tg     *Telegram
@@ -396,12 +401,35 @@ func (t *Telegram) sendVoice(ctx context.Context, chatID int64, data []byte, ext
 	if ext != ".ogg" {
 		method, field = "sendAudio", "audio"
 	}
+	return t.upload(ctx, method, field, "reply"+ext, data, map[string]string{
+		"chat_id": strconv.FormatInt(chatID, 10),
+	})
+}
+
+// sendFile uploads a produced file. Images go as a photo so they render inline;
+// everything else goes as a document.
+func (t *Telegram) sendFile(ctx context.Context, chatID int64, a channel.Attachment) error {
+	method, field := "sendDocument", "document"
+	if strings.HasPrefix(a.Mime, "image/") && a.Mime != "image/svg+xml" {
+		method, field = "sendPhoto", "photo"
+	}
+	extra := map[string]string{"chat_id": strconv.FormatInt(chatID, 10)}
+	if a.Caption != "" {
+		extra["caption"] = a.Caption
+	}
+	return t.upload(ctx, method, field, a.Name, a.Data, extra)
+}
+
+// upload posts a multipart form with one file field plus the given text fields.
+func (t *Telegram) upload(ctx context.Context, method, field, filename string, data []byte, fields map[string]string) error {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	if err := mw.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
-		return err
+	for k, v := range fields {
+		if err := mw.WriteField(k, v); err != nil {
+			return err
+		}
 	}
-	fw, err := mw.CreateFormFile(field, "reply"+ext)
+	fw, err := mw.CreateFormFile(field, filename)
 	if err != nil {
 		return err
 	}

@@ -255,7 +255,7 @@ func TestUploadFilePostsMultipart(t *testing.T) {
 	defer rest.Close()
 
 	d := &Discord{Token: "t", BaseURL: rest.URL}
-	if err := d.uploadFile(context.Background(), "chan1", "reply.ogg", []byte("opus")); err != nil {
+	if err := d.uploadFile(context.Background(), "chan1", "reply.ogg", []byte("opus"), ""); err != nil {
 		t.Fatal(err)
 	}
 	if field != "files[0]" {
