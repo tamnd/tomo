@@ -44,6 +44,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newOnboardCmd())
 	root.AddCommand(newSessionsCmd())
 	root.AddCommand(newCronCmd())
+	root.AddCommand(newSkillsCmd())
 	return root
 }
 
