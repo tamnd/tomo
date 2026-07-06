@@ -135,6 +135,8 @@ func buildCurator(cfg *config.Config, model string) (*curator.Curator, error) {
 		Provider:  p,
 		Model:     modelID,
 		Memory:    &memory.Memory{Dir: filepath.Join(cfg.DataDir, "memory")},
+		Skills:    &skill.Store{Dir: filepath.Join(cfg.DataDir, "skills")},
+		Drafts:    &skill.Store{Dir: filepath.Join(cfg.DataDir, "skill-drafts")},
 		MaxTokens: cfg.Agent.MaxTokens,
 	}, nil
 }

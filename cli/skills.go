@@ -16,9 +16,14 @@ func newSkillsCmd() *cobra.Command {
 		Short: "Manage the markdown skills tomo can follow",
 		Long: "skills are folders under the data dir, each a SKILL.md with a name,\n" +
 			"a description, and a permission manifest. Nothing installs them but\n" +
-			"you: copy a skill in, lint it, and enable it. There is no remote hub.",
+			"you: copy a skill in, lint it, and enable it. There is no remote hub.\n" +
+			"The curator may draft one from a workflow it sees you repeat; those\n" +
+			"wait under 'drafts' until you install them.",
 	}
-	cmd.AddCommand(newSkillsListCmd(), newSkillsLintCmd(), newSkillsEnableCmd(), newSkillsDisableCmd())
+	cmd.AddCommand(
+		newSkillsListCmd(), newSkillsLintCmd(), newSkillsEnableCmd(), newSkillsDisableCmd(),
+		newSkillsDraftsCmd(), newSkillsInstallCmd(), newSkillsDiscardCmd(),
+	)
 	return cmd
 }
 
@@ -29,6 +34,17 @@ func skillStore(cmd *cobra.Command) (*skill.Store, error) {
 		return nil, err
 	}
 	return &skill.Store{Dir: filepath.Join(cfg.DataDir, "skills")}, nil
+}
+
+// draftStore opens the store of skills the curator has proposed but not
+// installed. It is kept apart from the installed store so a draft never rides
+// in the prompt until the user installs it.
+func draftStore(cmd *cobra.Command) (*skill.Store, error) {
+	cfg, err := loadConfig(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return &skill.Store{Dir: filepath.Join(cfg.DataDir, "skill-drafts")}, nil
 }
 
 func newSkillsListCmd() *cobra.Command {
@@ -123,6 +139,88 @@ func newSkillsDisableCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "disabled %s\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newSkillsDraftsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "drafts",
+		Short: "List skills the curator has proposed for you to review",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ds, err := draftStore(cmd)
+			if err != nil {
+				return err
+			}
+			entries, err := ds.Entries()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(entries) == 0 {
+				fmt.Fprintln(out, "no drafts waiting")
+				return nil
+			}
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAME\tPERMS\tDESCRIPTION")
+			for _, e := range entries {
+				if e.Err != nil {
+					fmt.Fprintf(w, "%s\t%s\t%s\n", e.Name, "-", "broken: "+e.Err.Error())
+					continue
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\n", e.Name, perms(e.Permissions), e.Description)
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			fmt.Fprintln(out, "\nreview one with: tomo skills install <name> (or discard <name>)")
+			return nil
+		},
+	}
+}
+
+func newSkillsInstallCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "install <name>",
+		Short: "Install a drafted skill so it rides in the prompt",
+		Long: "install promotes a draft the curator proposed into your installed\n" +
+			"skills. This is the explicit step: nothing a reflection drafts takes\n" +
+			"effect until you install it. Lint it first if you want a closer look.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ds, err := draftStore(cmd)
+			if err != nil {
+				return err
+			}
+			ss, err := skillStore(cmd)
+			if err != nil {
+				return err
+			}
+			if err := skill.Promote(ds, ss, args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "installed %s\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newSkillsDiscardCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "discard <name>",
+		Short: "Throw away a drafted skill you do not want",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ds, err := draftStore(cmd)
+			if err != nil {
+				return err
+			}
+			if err := ds.Remove(args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "discarded %s\n", args[0])
 			return nil
 		},
 	}
