@@ -40,6 +40,7 @@ type Config struct {
 type Channels struct {
 	Telegram Telegram `yaml:"telegram"`
 	Discord  Discord  `yaml:"discord"`
+	Slack    Slack    `yaml:"slack"`
 }
 
 // Telegram holds the bot token and the chats allowed to reach it.
@@ -51,6 +52,14 @@ type Telegram struct {
 // Discord holds the bot token and the channel ids allowed to reach it.
 type Discord struct {
 	Token         string   `yaml:"token"`
+	AllowChannels []string `yaml:"allow_channels"`
+}
+
+// Slack holds the app-level and bot tokens and the channels allowed to reach
+// the bot. The app token opens the socket; the bot token posts messages.
+type Slack struct {
+	AppToken      string   `yaml:"app_token"`
+	BotToken      string   `yaml:"bot_token"`
 	AllowChannels []string `yaml:"allow_channels"`
 }
 
