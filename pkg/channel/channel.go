@@ -22,12 +22,21 @@ type Caps struct {
 	Stream  bool // can update a message as text streams
 }
 
+// Clip is a speech attachment waiting to be transcribed. The router turns it
+// into text before the turn runs; channels only have to carry the bytes and
+// the container extension.
+type Clip struct {
+	Data []byte // the raw audio
+	Ext  string // container extension, like ".ogg" or ".m4a"
+}
+
 // Inbound is one message arriving from a channel.
 type Inbound struct {
 	Chat   string           // conversation key within the channel
 	User   string           // sender id, for allowlisting
 	Text   string           // message text
 	Images []provider.Block // any image blocks that came with it
+	Audio  []Clip           // any voice notes that came with it, pre-transcription
 }
 
 // Message builds the provider message for an inbound, text first then images.

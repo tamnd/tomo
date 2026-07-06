@@ -164,11 +164,18 @@ func (s *Slack) onEvent(ctx context.Context, payload json.RawMessage) {
 	// url_private needs the bot token to download.
 	auth := http.Header{"Authorization": {"Bearer " + s.BotToken}}
 	for _, f := range e.Files {
-		if !strings.HasPrefix(f.Mimetype, "image/") || f.URLPrivate == "" {
+		if f.URLPrivate == "" {
 			continue
 		}
-		if img, err := channel.FetchImage(ctx, http.DefaultClient, f.URLPrivate, auth); err == nil {
-			in.Images = append(in.Images, img)
+		switch {
+		case strings.HasPrefix(f.Mimetype, "image/"):
+			if img, err := channel.FetchImage(ctx, http.DefaultClient, f.URLPrivate, auth); err == nil {
+				in.Images = append(in.Images, img)
+			}
+		case strings.HasPrefix(f.Mimetype, "audio/"):
+			if clip, err := channel.FetchAudio(ctx, http.DefaultClient, f.URLPrivate, auth); err == nil {
+				in.Audio = append(in.Audio, clip)
+			}
 		}
 	}
 	reply := &slReply{s: s, ctx: ctx, channelID: e.Channel}

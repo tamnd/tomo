@@ -15,15 +15,27 @@ import (
 	"github.com/tamnd/tomo/pkg/tool"
 )
 
-// scriptProvider replays canned responses.
+// fakeTranscriber returns a canned transcript, for the voice-fold tests.
+type fakeTranscriber struct {
+	text string
+	err  error
+}
+
+func (f fakeTranscriber) Transcribe(context.Context, []byte, string) (string, error) {
+	return f.text, f.err
+}
+
+// scriptProvider replays canned responses and records the requests it saw.
 type scriptProvider struct {
 	mu        sync.Mutex
 	responses []*provider.Response
+	reqs      []provider.Request
 }
 
-func (s *scriptProvider) Stream(_ context.Context, _ provider.Request, emit func(provider.Event)) (*provider.Response, error) {
+func (s *scriptProvider) Stream(_ context.Context, req provider.Request, emit func(provider.Event)) (*provider.Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reqs = append(s.reqs, req)
 	resp := s.responses[0]
 	s.responses = s.responses[1:]
 	if emit != nil {
@@ -69,7 +81,106 @@ func newTestRouter(t *testing.T, resp []*provider.Response, tools ...tool.Tool) 
 	newAgent := func() (*agent.Agent, error) {
 		return &agent.Agent{Provider: sp, Model: "m", Tools: reg, MaxTurns: 8}, nil
 	}
-	return NewRouter(st, policy.New(policy.Config{}), nil, newAgent), sp, st
+	return NewRouter(st, policy.New(policy.Config{}), nil, newAgent, nil), sp, st
+}
+
+func TestRouterFoldsVoiceIntoTurn(t *testing.T) {
+	r, sp, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn},
+	})
+	r.transcriber = fakeTranscriber{text: "turn on the lights"}
+
+	rep := &captureReply{}
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In:       Inbound{Chat: "c", User: "u", Audio: []Clip{{Data: []byte("ogg"), Ext: ".ogg"}}},
+		Reply:    rep,
+		Approver: &yesApprover{},
+	})
+
+	req := sp.reqs[len(sp.reqs)-1]
+	last := req.Messages[len(req.Messages)-1]
+	if !strings.Contains(blocksText(last), "turn on the lights") {
+		t.Errorf("transcript did not reach the model: %q", blocksText(last))
+	}
+	if !hasNotice(rep.notices, "heard") {
+		t.Errorf("expected a 'heard' notice, got %v", rep.notices)
+	}
+}
+
+func TestRouterFoldsVoiceWithText(t *testing.T) {
+	r, sp, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("ok")}, StopReason: provider.StopEndTurn},
+	})
+	r.transcriber = fakeTranscriber{text: "and dim them"}
+
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In:       Inbound{Chat: "c", User: "u", Text: "hello", Audio: []Clip{{Data: []byte("x"), Ext: ".ogg"}}},
+		Reply:    &captureReply{},
+		Approver: &yesApprover{},
+	})
+
+	body := blocksText(sp.reqs[len(sp.reqs)-1].Messages[0])
+	if !strings.Contains(body, "hello") || !strings.Contains(body, "and dim them") {
+		t.Errorf("message should carry both text and transcript, got %q", body)
+	}
+}
+
+func TestRouterVoiceWithoutTranscriberNotices(t *testing.T) {
+	r, _, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("ignored")}, StopReason: provider.StopEndTurn},
+	})
+	// transcriber stays nil
+
+	rep := &captureReply{}
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In:       Inbound{Chat: "c", User: "u", Audio: []Clip{{Data: []byte("x"), Ext: ".ogg"}}},
+		Reply:    rep,
+		Approver: &yesApprover{},
+	})
+	if !hasNotice(rep.notices, "not configured") {
+		t.Errorf("expected a 'not configured' notice, got %v", rep.notices)
+	}
+}
+
+func TestRouterVoiceTranscribeErrorContinues(t *testing.T) {
+	r, sp, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("ok")}, StopReason: provider.StopEndTurn},
+	})
+	r.transcriber = fakeTranscriber{err: context.DeadlineExceeded}
+
+	rep := &captureReply{}
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In:       Inbound{Chat: "c", User: "u", Text: "still here", Audio: []Clip{{Data: []byte("x"), Ext: ".ogg"}}},
+		Reply:    rep,
+		Approver: &yesApprover{},
+	})
+	if !hasNotice(rep.notices, "could not transcribe") {
+		t.Errorf("expected a failure notice, got %v", rep.notices)
+	}
+	// the text turn still ran with the typed text
+	if body := blocksText(sp.reqs[len(sp.reqs)-1].Messages[0]); !strings.Contains(body, "still here") {
+		t.Errorf("typed text should survive a transcribe failure, got %q", body)
+	}
+}
+
+// blocksText joins the text blocks of a message.
+func blocksText(m provider.Message) string {
+	var b strings.Builder
+	for _, bl := range m.Blocks {
+		if bl.Type == provider.BlockText {
+			b.WriteString(bl.Text)
+		}
+	}
+	return b.String()
+}
+
+func hasNotice(notices []string, sub string) bool {
+	for _, n := range notices {
+		if strings.Contains(n, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRouterRunsTurnAndPersists(t *testing.T) {

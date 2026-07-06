@@ -214,3 +214,28 @@ func TestOnMessageSkipsEmptyAndBots(t *testing.T) {
 		t.Errorf("started %d turns, want 0", turns)
 	}
 }
+
+func TestOnMessageIngestsAudioAttachment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "audio/ogg")
+		_, _ = w.Write([]byte("OggS-voice"))
+	}))
+	defer srv.Close()
+
+	d := &Discord{Allow: []string{"c1"}}
+	got := make(chan channel.Inbound, 1)
+	d.handler = func(_ context.Context, x channel.Exchange) { got <- x.In }
+
+	payload := `{"channel_id":"c1","author":{"id":"u1"},"content":"",` +
+		`"attachments":[{"url":"` + srv.URL + `/note.ogg","content_type":"audio/ogg"}]}`
+	d.onMessage(context.Background(), json.RawMessage(payload))
+
+	select {
+	case in := <-got:
+		if len(in.Audio) != 1 {
+			t.Errorf("audio clips = %d, want 1", len(in.Audio))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never ran")
+	}
+}

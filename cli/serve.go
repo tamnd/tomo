@@ -18,6 +18,7 @@ import (
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/schedule"
 	"github.com/tamnd/tomo/pkg/store"
+	"github.com/tamnd/tomo/pkg/voice"
 )
 
 func newServeCmd() *cobra.Command {
@@ -57,7 +58,11 @@ func newServeCmd() *cobra.Command {
 				a, _, err := buildAgent(cfg, model, nil)
 				return a, err
 			}
-			router := channel.NewRouter(st, engine, auditor, newAgent)
+			var transcriber voice.Transcriber
+			if v := cfg.Voice; v.Model != "" {
+				transcriber = &voice.Whisper{Bin: v.Bin, Model: v.Model, FFmpeg: v.FFmpeg}
+			}
+			router := channel.NewRouter(st, engine, auditor, newAgent, transcriber)
 
 			channels := []channel.Channel{&webchat.WebChat{Addr: addr}}
 			if tg := cfg.Channels.Telegram; tg.Token != "" {
@@ -77,6 +82,9 @@ func newServeCmd() *cobra.Command {
 			fmt.Fprintf(out, "tomo serving on http://%s\n", addr)
 			for _, ch := range channels {
 				fmt.Fprintf(out, "  channel: %s\n", ch.Name())
+			}
+			if transcriber != nil {
+				fmt.Fprintf(out, "  voice: whisper (%s)\n", cfg.Voice.Model)
 			}
 
 			if hb := cfg.Heartbeat; hb.Enabled {

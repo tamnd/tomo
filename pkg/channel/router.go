@@ -12,6 +12,7 @@ import (
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/schedule"
 	"github.com/tamnd/tomo/pkg/store"
+	"github.com/tamnd/tomo/pkg/voice"
 )
 
 // AgentFunc returns a ready base agent, minus its gate. It runs once per
@@ -22,18 +23,20 @@ type AgentFunc func() (*agent.Agent, error)
 // and streams the reply back. It is channel-agnostic: HandlerFor binds it to a
 // named channel and returns the Handler that channel drives.
 type Router struct {
-	store    *store.Store
-	engine   *policy.Engine
-	auditor  policy.Auditor
-	newAgent AgentFunc
+	store       *store.Store
+	engine      *policy.Engine
+	auditor     policy.Auditor
+	newAgent    AgentFunc
+	transcriber voice.Transcriber // nil means voice notes cannot be transcribed
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
 
-// NewRouter wires a router.
-func NewRouter(st *store.Store, engine *policy.Engine, auditor policy.Auditor, newAgent AgentFunc) *Router {
-	return &Router{store: st, engine: engine, auditor: auditor, newAgent: newAgent, locks: map[string]*sync.Mutex{}}
+// NewRouter wires a router. transcriber may be nil, in which case a voice note
+// is acknowledged but not understood.
+func NewRouter(st *store.Store, engine *policy.Engine, auditor policy.Auditor, newAgent AgentFunc, transcriber voice.Transcriber) *Router {
+	return &Router{store: st, engine: engine, auditor: auditor, newAgent: newAgent, transcriber: transcriber, locks: map[string]*sync.Mutex{}}
 }
 
 // HandlerFor returns the Handler for a channel by name.
@@ -46,6 +49,8 @@ func (r *Router) HandlerFor(name string) Handler {
 
 func (r *Router) handle(ctx context.Context, x Exchange) {
 	defer x.Reply.Done()
+
+	r.foldAudio(ctx, &x)
 
 	if r.command(x) {
 		return
@@ -82,6 +87,45 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	if err != nil && ctx.Err() == nil {
 		x.Reply.Notice("error: " + err.Error())
 	}
+}
+
+// foldAudio transcribes any voice notes on the message and folds the text into
+// the message body, so the rest of the turn treats a voice note exactly like
+// typed text. It emits a notice for what it heard, and one when it cannot hear:
+// a note that fails to transcribe is dropped rather than aborting the turn.
+func (r *Router) foldAudio(ctx context.Context, x *Exchange) {
+	if len(x.In.Audio) == 0 {
+		return
+	}
+	if r.transcriber == nil {
+		x.Reply.Notice("· voice note received, but transcription is not configured")
+		return
+	}
+	for _, clip := range x.In.Audio {
+		text, err := r.transcriber.Transcribe(ctx, clip.Data, clip.Ext)
+		if err != nil {
+			x.Reply.Notice("· could not transcribe a voice note: " + err.Error())
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		x.Reply.Notice("· heard: " + oneLine(text))
+		if x.In.Text != "" {
+			x.In.Text += "\n\n"
+		}
+		x.In.Text += text
+	}
+}
+
+// oneLine collapses a transcript to a short single-line preview for the notice.
+func oneLine(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
 }
 
 // sessionKey is the ledger name for this chat: the session it is bound to if

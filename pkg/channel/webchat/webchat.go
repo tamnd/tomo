@@ -89,6 +89,7 @@ func (w *WebChat) serveChat(rw http.ResponseWriter, r *http.Request) {
 		Session string   `json:"session"`
 		Text    string   `json:"text"`
 		Images  []string `json:"images"` // data: URLs of pasted or attached images
+		Audio   []string `json:"audio"`  // data: URLs of recorded voice notes
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
@@ -102,6 +103,11 @@ func (w *WebChat) serveChat(rw http.ResponseWriter, r *http.Request) {
 		// A bad image is dropped, not fatal; the text turn still runs.
 		if img, err := channel.DecodeDataURL(u); err == nil {
 			in.Images = append(in.Images, img)
+		}
+	}
+	for _, u := range body.Audio {
+		if clip, err := channel.DecodeAudioDataURL(u); err == nil {
+			in.Audio = append(in.Audio, clip)
 		}
 	}
 	flusher, ok := rw.(http.Flusher)

@@ -197,3 +197,33 @@ func TestReplyDeliversOnDone(t *testing.T) {
 		t.Errorf("sent = %v", sent)
 	}
 }
+
+func TestPollReadsAudioAttachment(t *testing.T) {
+	db := testDB(t)
+	dir := t.TempDir()
+	clip := filepath.Join(dir, "note.caf")
+	if err := os.WriteFile(clip, []byte("caf-voice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := db.Exec(`
+		INSERT INTO message (ROWID, text, handle_id, is_from_me) VALUES (30, NULL, 1, 0);
+		INSERT INTO attachment (ROWID, filename, mime_type) VALUES (2, ?, 'audio/x-caf');
+		INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (30, 2);`, clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, _, err := poll(context.Background(), db, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if len(msgs[0].Audio) != 1 {
+		t.Fatalf("got %d audio clips, want 1", len(msgs[0].Audio))
+	}
+	if msgs[0].Audio[0].Ext != ".caf" {
+		t.Errorf("ext = %q, want .caf", msgs[0].Audio[0].Ext)
+	}
+}

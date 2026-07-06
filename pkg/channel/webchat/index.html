@@ -27,6 +27,8 @@
   button.attach { font:inherit; padding:0 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); cursor:pointer; }
   #tray { max-width:760px; margin:0 auto; padding:0 20px; display:flex; flex-wrap:wrap; gap:8px; }
   #tray img { height:56px; border:1px solid var(--line); border-radius:6px; object-fit:cover; }
+  #tray .clip { font-size:13px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:4px 8px; cursor:pointer; }
+  button.mic.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .msg .body img { max-width:280px; border:1px solid var(--line); border-radius:8px; margin-top:6px; display:block; }
 </style>
 </head>
@@ -36,6 +38,7 @@
 <div id="tray"></div>
 <form id="f">
   <button class="attach" type="button" id="clip" title="Attach image">＋</button>
+  <button class="attach mic" type="button" id="mic" title="Record a voice note">🎙</button>
   <input type="file" id="file" accept="image/*" multiple hidden>
   <textarea id="t" rows="1" placeholder="Message tomo..." autofocus></textarea>
   <button class="send" type="submit">Send</button>
@@ -47,7 +50,8 @@ const input = document.getElementById('t');
 const tray = document.getElementById('tray');
 const file = document.getElementById('file');
 const session = 'web';
-let pending = []; // data: URLs staged for the next message
+let pending = [];      // image data: URLs staged for the next message
+let pendingAudio = []; // voice note data: URLs staged for the next message
 
 function readFile(f) {
   return new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
@@ -66,6 +70,11 @@ function drawTray() {
     img.onclick = () => { pending.splice(i, 1); drawTray(); };
     tray.appendChild(img);
   });
+  pendingAudio.forEach((_, i) => {
+    const c = document.createElement('span'); c.className = 'clip'; c.textContent = '🎙 voice note ✕'; c.title = 'Click to remove';
+    c.onclick = () => { pendingAudio.splice(i, 1); drawTray(); };
+    tray.appendChild(c);
+  });
 }
 document.getElementById('clip').onclick = () => file.click();
 file.onchange = () => { stage(file.files); file.value = ''; };
@@ -73,6 +82,29 @@ input.addEventListener('paste', (e) => {
   const imgs = [...e.clipboardData.items].filter(it => it.type.startsWith('image/')).map(it => it.getAsFile());
   if (imgs.length) { e.preventDefault(); stage(imgs); }
 });
+
+// Voice recording via MediaRecorder. One button toggles a take; on stop the
+// clip is staged as a data URL and sent with the next message.
+const micBtn = document.getElementById('mic');
+let recorder = null;
+micBtn.onclick = async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+  catch (err) { notice('microphone unavailable: ' + err.message); return; }
+  const chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = async () => {
+    micBtn.classList.remove('on');
+    stream.getTracks().forEach(t => t.stop());
+    const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
+    pendingAudio.push(await readFile(blob));
+    drawTray();
+  };
+  recorder.start();
+  micBtn.classList.add('on');
+};
 
 function add(cls, who) {
   const m = document.createElement('div');
@@ -104,15 +136,17 @@ form.onsubmit = async (e) => {
   e.preventDefault();
   const text = input.value.trim();
   const images = pending;
-  if (!text && !images.length) return;
+  const audio = pendingAudio;
+  if (!text && !images.length && !audio.length) return;
   const you = add('you', 'you');
   if (text) you.textContent = text;
   images.forEach(url => { const img = document.createElement('img'); img.src = url; you.appendChild(img); });
+  if (audio.length) { const c = document.createElement('div'); c.className = 'notice'; c.textContent = '🎙 voice note sent'; you.appendChild(c); }
   input.value = '';
-  pending = []; drawTray();
+  pending = []; pendingAudio = []; drawTray();
   const body = add('tomo', 'tomo');
 
-  const resp = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session, text, images})});
+  const resp = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session, text, images, audio})});
   const reader = resp.body.getReader();
   const dec = new TextDecoder();
   let buf = '';

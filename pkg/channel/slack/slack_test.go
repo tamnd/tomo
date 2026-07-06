@@ -196,3 +196,31 @@ func TestOnEventSkipsBotAndUnlisted(t *testing.T) {
 		t.Errorf("started %d turns, want 0", turns)
 	}
 }
+
+func TestOnEventIngestsAudioFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer xoxb-1" {
+			t.Errorf("missing bearer, got %q", got)
+		}
+		w.Header().Set("Content-Type", "audio/mp4")
+		_, _ = w.Write([]byte("m4a-voice"))
+	}))
+	defer srv.Close()
+
+	s := &Slack{Allow: []string{"C1"}, BotToken: "xoxb-1"}
+	got := make(chan channel.Inbound, 1)
+	s.handler = func(_ context.Context, x channel.Exchange) { got <- x.In }
+
+	payload := `{"event":{"type":"message","subtype":"file_share","channel":"C1","user":"U1","text":"",` +
+		`"files":[{"mimetype":"audio/mp4","url_private":"` + srv.URL + `/v.m4a"}]}}`
+	s.onEvent(context.Background(), json.RawMessage(payload))
+
+	select {
+	case in := <-got:
+		if len(in.Audio) != 1 {
+			t.Errorf("audio clips = %d, want 1", len(in.Audio))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never ran")
+	}
+}
