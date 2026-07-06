@@ -47,8 +47,9 @@ type Config struct {
 
 // Engine evaluates decisions. The zero value is not useful; build with New.
 type Engine struct {
-	class map[tool.Class]Decision
-	rules map[string]Decision
+	class    map[tool.Class]Decision
+	rules    map[string]Decision
+	external map[string]bool
 }
 
 // New builds an engine from config, filling any unset class with the safe
@@ -61,12 +62,23 @@ func New(cfg Config) *Engine {
 			tool.ClassWrite: orDefault(cfg.Write, Ask),
 			tool.ClassExec:  orDefault(cfg.Exec, Ask),
 		},
-		rules: map[string]Decision{},
+		rules:    map[string]Decision{},
+		external: map[string]bool{},
 	}
 	for name, dec := range cfg.Rules {
 		e.rules[name] = ParseDecision(dec)
 	}
 	return e
+}
+
+// MarkExternal flags tools that come from outside tomo, such as those served by
+// an MCP server, bridged from a CLI, or reached through ant. They default to ask
+// even when their class would normally run, since their code is not tomo's. An
+// explicit per-tool rule still wins, so a user who trusts one can allow it.
+func (e *Engine) MarkExternal(names ...string) {
+	for _, name := range names {
+		e.external[name] = true
+	}
 }
 
 func orDefault(s string, def Decision) Decision {
@@ -89,6 +101,9 @@ func (e *Engine) Decide(name string, class tool.Class, tainted bool) (Decision, 
 	if dec == "" {
 		// An unknown class is not something we reasoned about: fail closed.
 		return Ask, fmt.Sprintf("unknown capability %q", class)
+	}
+	if e.external[name] && dec == Allow {
+		return Ask, fmt.Sprintf("external tool %q defaults to ask", name)
 	}
 	if tainted && dec == Allow && (class == tool.ClassWrite || class == tool.ClassExec) {
 		return Ask, fmt.Sprintf("%s escalated: session touched untrusted content", class)

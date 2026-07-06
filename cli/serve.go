@@ -57,6 +57,11 @@ func newServeCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			mcpTools, closeMCP := dialMCP(cmd.Context(), cfg, out)
 			defer closeMCP()
+			// Tools that come from an MCP server are not tomo's own code, so they
+			// default to ask even when their class would otherwise run.
+			for _, t := range mcpTools {
+				engine.MarkExternal(t.Name)
+			}
 
 			newAgent := func() (*agent.Agent, error) {
 				a, _, err := buildAgent(cfg, model, nil, mcpTools...)
