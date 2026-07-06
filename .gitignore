@@ -1,3 +1,7 @@
 /tomo
 /dist/
 coverage.out
+docs/public/
+docs/public-pages/
+docs/public-cf/
+.tago-src/

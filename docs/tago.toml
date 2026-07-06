@@ -1,0 +1,10 @@
+title       = "tomo"
+baseURL     = "https://tomo.tamnd.com/"
+description = "tomo (友, companion) is a personal AI agent in one Go binary. It sits between your chat apps and a language model, remembers you across conversations, and can act: run commands, fetch pages, save memories, schedule work. Every action passes a fail-closed policy gate, and content pulled in from the outside taints the session so injected instructions cannot quietly reach your shell."
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/tomo"
