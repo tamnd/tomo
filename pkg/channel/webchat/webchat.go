@@ -34,9 +34,11 @@ type WebChat struct {
 // Name implements channel.Channel.
 func (w *WebChat) Name() string { return "web" }
 
-// Caps implements channel.Channel. The browser streams text and renders
-// approval buttons; image upload comes later.
-func (w *WebChat) Caps() channel.Caps { return channel.Caps{Stream: true, Buttons: true} }
+// Caps implements channel.Channel. The browser streams text, renders approval
+// buttons, and can attach images pasted or picked in the page.
+func (w *WebChat) Caps() channel.Caps {
+	return channel.Caps{Stream: true, Buttons: true, Media: true}
+}
 
 // Run starts the HTTP server and blocks until ctx is cancelled.
 func (w *WebChat) Run(ctx context.Context, h channel.Handler) error {
@@ -84,8 +86,9 @@ func (w *WebChat) serveIndex(rw http.ResponseWriter, r *http.Request) {
 
 func (w *WebChat) serveChat(rw http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Session string `json:"session"`
-		Text    string `json:"text"`
+		Session string   `json:"session"`
+		Text    string   `json:"text"`
+		Images  []string `json:"images"` // data: URLs of pasted or attached images
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
@@ -93,6 +96,13 @@ func (w *WebChat) serveChat(rw http.ResponseWriter, r *http.Request) {
 	}
 	if body.Session == "" {
 		body.Session = "web"
+	}
+	in := channel.Inbound{Chat: body.Session, User: "local", Text: body.Text}
+	for _, u := range body.Images {
+		// A bad image is dropped, not fatal; the text turn still runs.
+		if img, err := channel.DecodeDataURL(u); err == nil {
+			in.Images = append(in.Images, img)
+		}
 	}
 	flusher, ok := rw.(http.Flusher)
 	if !ok {
@@ -105,7 +115,7 @@ func (w *WebChat) serveChat(rw http.ResponseWriter, r *http.Request) {
 
 	sse := &sseReply{rw: rw, flusher: flusher}
 	x := channel.Exchange{
-		In:       channel.Inbound{Chat: body.Session, User: "local", Text: body.Text},
+		In:       in,
 		Reply:    sse,
 		Approver: &webApprover{wc: w, sse: sse, ctx: r.Context()},
 	}

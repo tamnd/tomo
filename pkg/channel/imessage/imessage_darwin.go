@@ -23,6 +23,7 @@ import (
 
 	"github.com/tamnd/tomo/pkg/channel"
 	"github.com/tamnd/tomo/pkg/policy"
+	"github.com/tamnd/tomo/pkg/provider"
 )
 
 // IMessage watches the Messages database and replies through Messages.app.
@@ -120,7 +121,7 @@ func (m *IMessage) onMessage(ctx context.Context, msg imsg) {
 	}
 	reply := &imReply{m: m, ctx: ctx, handle: msg.Handle}
 	x := channel.Exchange{
-		In:       channel.Inbound{Chat: msg.Handle, User: msg.Handle, Text: msg.Text},
+		In:       channel.Inbound{Chat: msg.Handle, User: msg.Handle, Text: msg.Text, Images: msg.Images},
 		Reply:    reply,
 		Approver: &imApprover{m: m, ctx: ctx, handle: msg.Handle},
 	}
@@ -194,6 +195,7 @@ type imsg struct {
 	RowID  int64
 	Handle string
 	Text   string
+	Images []provider.Block
 }
 
 func maxRowID(ctx context.Context, db *sql.DB) (int64, error) {
@@ -205,32 +207,87 @@ func maxRowID(ctx context.Context, db *sql.DB) (int64, error) {
 }
 
 // poll returns inbound messages newer than after, and the new high-water rowid.
-// Only text messages from other people are returned; our own sends and rows
-// that store their text in attributedBody rather than the text column are
-// skipped.
+// A message counts as inbound if it carries text or an image attachment; our
+// own sends are skipped. The watermark advances past every message we saw, so a
+// text-less, image-less row is not re-examined on the next tick.
 func poll(ctx context.Context, db *sql.DB, after int64) ([]imsg, int64, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT m.ROWID, h.id, m.text
+		SELECT m.ROWID, h.id, COALESCE(m.text, '')
 		FROM message m
 		JOIN handle h ON h.ROWID = m.handle_id
-		WHERE m.ROWID > ? AND m.is_from_me = 0 AND m.text IS NOT NULL AND m.text != ''
+		WHERE m.ROWID > ? AND m.is_from_me = 0
 		ORDER BY m.ROWID ASC`, after)
 	if err != nil {
 		return nil, after, err
 	}
-	defer rows.Close()
 
 	last := after
-	var out []imsg
+	var seen []imsg
 	for rows.Next() {
 		var msg imsg
 		if err := rows.Scan(&msg.RowID, &msg.Handle, &msg.Text); err != nil {
+			rows.Close()
 			return nil, after, err
 		}
-		out = append(out, msg)
+		seen = append(seen, msg)
 		last = msg.RowID
 	}
-	return out, last, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, after, err
+	}
+	rows.Close()
+
+	var out []imsg
+	for _, msg := range seen {
+		// Attachments are best effort: a missing table or unreadable file
+		// leaves the message as text-only rather than dropping the turn.
+		if imgs, err := attachments(ctx, db, msg.RowID); err == nil {
+			msg.Images = imgs
+		}
+		if msg.Text == "" && len(msg.Images) == 0 {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out, last, nil
+}
+
+// attachments returns the image attachments on a message as model-ready blocks.
+// Non-image files are ignored; iMessage keeps each attachment as a file on disk
+// under the user's home, so this reads them straight off the filesystem.
+func attachments(ctx context.Context, db *sql.DB, msgID int64) ([]provider.Block, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT a.filename, COALESCE(a.mime_type, '')
+		FROM attachment a
+		JOIN message_attachment_join maj ON maj.attachment_id = a.ROWID
+		WHERE maj.message_id = ?`, msgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []provider.Block
+	for rows.Next() {
+		var path, mime string
+		if err := rows.Scan(&path, &mime); err != nil {
+			return nil, err
+		}
+		if img, err := channel.ReadImageFile(expandHome(path), mime); err == nil {
+			out = append(out, img)
+		}
+	}
+	return out, rows.Err()
+}
+
+// expandHome resolves a leading ~ the way chat.db records attachment paths.
+func expandHome(p string) string {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, rest)
+		}
+	}
+	return p
 }
 
 func isYes(text string) bool {

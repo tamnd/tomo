@@ -24,12 +24,19 @@
   form { position:sticky; bottom:0; max-width:760px; margin:0 auto; padding:14px 20px; display:flex; gap:10px; background:var(--bg); border-top:1px solid var(--line); }
   textarea { flex:1; resize:none; font:inherit; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
   button.send { font:inherit; padding:0 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
+  button.attach { font:inherit; padding:0 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); cursor:pointer; }
+  #tray { max-width:760px; margin:0 auto; padding:0 20px; display:flex; flex-wrap:wrap; gap:8px; }
+  #tray img { height:56px; border:1px solid var(--line); border-radius:6px; object-fit:cover; }
+  .msg .body img { max-width:280px; border:1px solid var(--line); border-radius:8px; margin-top:6px; display:block; }
 </style>
 </head>
 <body>
 <header>tomo <span>友 · local</span></header>
 <div id="log"></div>
+<div id="tray"></div>
 <form id="f">
+  <button class="attach" type="button" id="clip" title="Attach image">＋</button>
+  <input type="file" id="file" accept="image/*" multiple hidden>
   <textarea id="t" rows="1" placeholder="Message tomo..." autofocus></textarea>
   <button class="send" type="submit">Send</button>
 </form>
@@ -37,7 +44,35 @@
 const log = document.getElementById('log');
 const form = document.getElementById('f');
 const input = document.getElementById('t');
+const tray = document.getElementById('tray');
+const file = document.getElementById('file');
 const session = 'web';
+let pending = []; // data: URLs staged for the next message
+
+function readFile(f) {
+  return new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+}
+async function stage(files) {
+  for (const f of files) {
+    if (!f.type.startsWith('image/')) continue;
+    pending.push(await readFile(f));
+  }
+  drawTray();
+}
+function drawTray() {
+  tray.innerHTML = '';
+  pending.forEach((url, i) => {
+    const img = document.createElement('img'); img.src = url; img.title = 'Click to remove';
+    img.onclick = () => { pending.splice(i, 1); drawTray(); };
+    tray.appendChild(img);
+  });
+}
+document.getElementById('clip').onclick = () => file.click();
+file.onchange = () => { stage(file.files); file.value = ''; };
+input.addEventListener('paste', (e) => {
+  const imgs = [...e.clipboardData.items].filter(it => it.type.startsWith('image/')).map(it => it.getAsFile());
+  if (imgs.length) { e.preventDefault(); stage(imgs); }
+});
 
 function add(cls, who) {
   const m = document.createElement('div');
@@ -68,12 +103,16 @@ function approval(ev) {
 form.onsubmit = async (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text) return;
-  add('you', 'you').textContent = text;
+  const images = pending;
+  if (!text && !images.length) return;
+  const you = add('you', 'you');
+  if (text) you.textContent = text;
+  images.forEach(url => { const img = document.createElement('img'); img.src = url; you.appendChild(img); });
   input.value = '';
+  pending = []; drawTray();
   const body = add('tomo', 'tomo');
 
-  const resp = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session, text})});
+  const resp = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session, text, images})});
   const reader = resp.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
