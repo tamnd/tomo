@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tomo</title>
+<style>
+  :root { color-scheme: light dark; --bg:#faf9f7; --fg:#1c1b19; --muted:#8a877f; --line:#e7e4de; --accent:#c2410c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1a1917; --fg:#eceae6; --muted:#8a877f; --line:#33302b; --accent:#f97316; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); font-weight:600; }
+  header span { color:var(--muted); font-weight:400; margin-left:8px; }
+  #log { max-width:760px; margin:0 auto; padding:20px; }
+  .msg { margin:0 0 18px; }
+  .who { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:4px; }
+  .you .who { color:var(--accent); }
+  .body { white-space:pre-wrap; word-wrap:break-word; }
+  .notice { color:var(--muted); font-size:13px; font-style:italic; margin:2px 0; }
+  .approval { border:1px solid var(--accent); border-radius:8px; padding:12px; margin:8px 0; }
+  .approval code { display:block; background:var(--line); padding:6px 8px; border-radius:5px; margin:6px 0; overflow-x:auto; font-size:13px; }
+  .approval button { font:inherit; padding:5px 14px; margin-right:8px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:var(--bg); color:var(--fg); }
+  .approval button.yes { background:var(--accent); color:#fff; border-color:var(--accent); }
+  form { position:sticky; bottom:0; max-width:760px; margin:0 auto; padding:14px 20px; display:flex; gap:10px; background:var(--bg); border-top:1px solid var(--line); }
+  textarea { flex:1; resize:none; font:inherit; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+  button.send { font:inherit; padding:0 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
+</style>
+</head>
+<body>
+<header>tomo <span>友 · local</span></header>
+<div id="log"></div>
+<form id="f">
+  <textarea id="t" rows="1" placeholder="Message tomo..." autofocus></textarea>
+  <button class="send" type="submit">Send</button>
+</form>
+<script>
+const log = document.getElementById('log');
+const form = document.getElementById('f');
+const input = document.getElementById('t');
+const session = 'web';
+
+function add(cls, who) {
+  const m = document.createElement('div');
+  m.className = 'msg ' + cls;
+  if (who) { const h = document.createElement('div'); h.className='who'; h.textContent=who; m.appendChild(h); }
+  const b = document.createElement('div'); b.className='body'; m.appendChild(b);
+  log.appendChild(m); window.scrollTo(0, document.body.scrollHeight);
+  return b;
+}
+function notice(text) {
+  const n = document.createElement('div'); n.className='notice'; n.textContent=text;
+  log.appendChild(n); window.scrollTo(0, document.body.scrollHeight);
+}
+function approval(ev) {
+  const box = document.createElement('div'); box.className='approval';
+  box.innerHTML = '<div>tomo wants to run <b>'+ev.tool+'</b> ['+ev.class+']</div>' +
+    (ev.input && ev.input!=='{}' ? '<code>'+ev.input.replace(/</g,'&lt;')+'</code>' : '') +
+    '<div class="notice">'+ev.reason+'</div>';
+  const yes = document.createElement('button'); yes.className='yes'; yes.textContent='Allow';
+  const no = document.createElement('button'); no.textContent='Deny';
+  const decide = (allow) => { yes.disabled=no.disabled=true;
+    fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:ev.token,allow})}); };
+  yes.onclick=()=>decide(true); no.onclick=()=>decide(false);
+  box.appendChild(yes); box.appendChild(no);
+  log.appendChild(box); window.scrollTo(0, document.body.scrollHeight);
+}
+
+form.onsubmit = async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  add('you', 'you').textContent = text;
+  input.value = '';
+  const body = add('tomo', 'tomo');
+
+  const resp = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session, text})});
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream:true});
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i+2);
+      if (!line.startsWith('data: ')) continue;
+      const ev = JSON.parse(line.slice(6));
+      if (ev.type==='chunk') { body.textContent += ev.text; window.scrollTo(0, document.body.scrollHeight); }
+      else if (ev.type==='notice') notice(ev.text);
+      else if (ev.type==='approval') approval(ev);
+    }
+  }
+};
+input.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); form.requestSubmit(); }});
+</script>
+</body>
+</html>
