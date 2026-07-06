@@ -239,3 +239,29 @@ func TestOnMessageIngestsAudioAttachment(t *testing.T) {
 		t.Fatal("handler never ran")
 	}
 }
+
+func TestUploadFilePostsMultipart(t *testing.T) {
+	var field, auth string
+	rest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		_ = r.ParseMultipartForm(1 << 20)
+		if r.MultipartForm != nil {
+			for f := range r.MultipartForm.File {
+				field = f
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer rest.Close()
+
+	d := &Discord{Token: "t", BaseURL: rest.URL}
+	if err := d.uploadFile(context.Background(), "chan1", "reply.ogg", []byte("opus")); err != nil {
+		t.Fatal(err)
+	}
+	if field != "files[0]" {
+		t.Errorf("file field = %q, want files[0]", field)
+	}
+	if auth != "Bot t" {
+		t.Errorf("auth = %q, want the bot token", auth)
+	}
+}

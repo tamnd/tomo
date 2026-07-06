@@ -62,7 +62,11 @@ func newServeCmd() *cobra.Command {
 			if v := cfg.Voice; v.Model != "" {
 				transcriber = &voice.Whisper{Bin: v.Bin, Model: v.Model, FFmpeg: v.FFmpeg}
 			}
-			router := channel.NewRouter(st, engine, auditor, newAgent, transcriber)
+			var synth voice.Synthesizer
+			if v := cfg.Voice; v.TTSModel != "" {
+				synth = &voice.Speaker{Bin: v.TTSBin, Model: v.TTSModel, FFmpeg: v.FFmpeg}
+			}
+			router := channel.NewRouter(st, engine, auditor, newAgent, transcriber, synth)
 
 			channels := []channel.Channel{&webchat.WebChat{Addr: addr}}
 			if tg := cfg.Channels.Telegram; tg.Token != "" {
@@ -84,7 +88,10 @@ func newServeCmd() *cobra.Command {
 				fmt.Fprintf(out, "  channel: %s\n", ch.Name())
 			}
 			if transcriber != nil {
-				fmt.Fprintf(out, "  voice: whisper (%s)\n", cfg.Voice.Model)
+				fmt.Fprintf(out, "  voice in: whisper (%s)\n", cfg.Voice.Model)
+			}
+			if synth != nil {
+				fmt.Fprintf(out, "  voice out: piper (%s)\n", cfg.Voice.TTSModel)
 			}
 
 			if hb := cfg.Heartbeat; hb.Enabled {

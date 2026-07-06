@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -163,6 +164,29 @@ func (s *sseReply) event(kind string, data map[string]any) {
 func (s *sseReply) Chunk(text string)  { s.event("chunk", map[string]any{"text": text}) }
 func (s *sseReply) Notice(text string) { s.event("notice", map[string]any{"text": text}) }
 func (s *sseReply) Done()              { s.event("done", map[string]any{}) }
+
+// Voice sends a spoken reply as an audio event; the page plays it inline.
+func (s *sseReply) Voice(clip channel.Clip) {
+	s.event("audio", map[string]any{
+		"mime": mimeForExt(clip.Ext),
+		"data": base64.StdEncoding.EncodeToString(clip.Data),
+	})
+}
+
+// mimeForExt maps a clip extension to the media type the browser needs on the
+// data URL. Voice notes are opus in an ogg container by default.
+func mimeForExt(ext string) string {
+	switch ext {
+	case ".wav":
+		return "audio/wav"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".m4a":
+		return "audio/mp4"
+	default:
+		return "audio/ogg"
+	}
+}
 
 // webApprover asks the browser to approve a call by emitting an approval
 // event, then blocks until /api/approve resolves the token or the request ends.

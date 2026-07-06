@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"slices"
 	"strings"
@@ -314,6 +315,11 @@ func (r *dcReply) Done() {
 	}
 }
 
+// Voice sends a spoken reply as an audio attachment.
+func (r *dcReply) Voice(clip channel.Clip) {
+	_ = r.d.uploadFile(r.ctx, r.channelID, "reply"+clip.Ext, clip.Data)
+}
+
 // dcApprover posts Allow/Deny buttons and waits for the click.
 type dcApprover struct {
 	d         *Discord
@@ -416,6 +422,43 @@ func (d *Discord) dial(ctx context.Context, url string) (*websocket.Conn, error)
 
 func (d *Discord) sendMessage(ctx context.Context, channelID string, body map[string]any) error {
 	return d.rest(ctx, http.MethodPost, "/channels/"+channelID+"/messages", body)
+}
+
+// uploadFile posts a file to a channel as a message attachment, which is how a
+// spoken reply reaches Discord since it has no dedicated voice-note type.
+func (d *Discord) uploadFile(ctx context.Context, channelID, filename string, data []byte) error {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("payload_json", `{"attachments":[{"id":0,"filename":"`+filename+`"}]}`); err != nil {
+		return err
+	}
+	fw, err := mw.CreateFormFile("files[0]", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.restBase()+"/channels/"+channelID+"/messages", &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bot "+d.Token)
+	resp, err := d.client().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
+		return fmt.Errorf("discord upload: %s: %s", resp.Status, strings.TrimSpace(string(msg)))
+	}
+	return nil
 }
 
 func (d *Discord) callback(ctx context.Context, id, token string, kind int) error {

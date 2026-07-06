@@ -25,6 +25,28 @@ func (f fakeTranscriber) Transcribe(context.Context, []byte, string) (string, er
 	return f.text, f.err
 }
 
+// fakeSynth returns canned audio and records the texts it was asked to speak.
+type fakeSynth struct {
+	audio []byte
+	ext   string
+	err   error
+	texts []string
+}
+
+func (f *fakeSynth) Synthesize(_ context.Context, text string) ([]byte, string, error) {
+	f.texts = append(f.texts, text)
+	return f.audio, f.ext, f.err
+}
+
+// voiceReply is a captureReply that can also receive spoken clips, standing in
+// for a channel that carries audio out.
+type voiceReply struct {
+	captureReply
+	clips []Clip
+}
+
+func (v *voiceReply) Voice(clip Clip) { v.clips = append(v.clips, clip) }
+
 // scriptProvider replays canned responses and records the requests it saw.
 type scriptProvider struct {
 	mu        sync.Mutex
@@ -81,7 +103,7 @@ func newTestRouter(t *testing.T, resp []*provider.Response, tools ...tool.Tool) 
 	newAgent := func() (*agent.Agent, error) {
 		return &agent.Agent{Provider: sp, Model: "m", Tools: reg, MaxTurns: 8}, nil
 	}
-	return NewRouter(st, policy.New(policy.Config{}), nil, newAgent, nil), sp, st
+	return NewRouter(st, policy.New(policy.Config{}), nil, newAgent, nil, nil), sp, st
 }
 
 func TestRouterFoldsVoiceIntoTurn(t *testing.T) {
@@ -160,6 +182,84 @@ func TestRouterVoiceTranscribeErrorContinues(t *testing.T) {
 	// the text turn still ran with the typed text
 	if body := blocksText(sp.reqs[len(sp.reqs)-1].Messages[0]); !strings.Contains(body, "still here") {
 		t.Errorf("typed text should survive a transcribe failure, got %q", body)
+	}
+}
+
+func TestRouterSpeaksReplyWhenUserSpoke(t *testing.T) {
+	r, _, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("the lights are on now")}, StopReason: provider.StopEndTurn},
+	})
+	r.transcriber = fakeTranscriber{text: "turn on the lights"}
+	synth := &fakeSynth{audio: []byte("opus"), ext: ".ogg"}
+	r.synth = synth
+
+	rep := &voiceReply{}
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In:       Inbound{Chat: "c", User: "u", Audio: []Clip{{Data: []byte("ogg"), Ext: ".ogg"}}},
+		Reply:    rep,
+		Approver: &yesApprover{},
+	})
+
+	if len(rep.clips) != 1 || string(rep.clips[0].Data) != "opus" || rep.clips[0].Ext != ".ogg" {
+		t.Fatalf("expected one spoken clip, got %+v", rep.clips)
+	}
+	if len(synth.texts) != 1 || !strings.Contains(synth.texts[0], "the lights are on now") {
+		t.Errorf("synth was asked to speak %v", synth.texts)
+	}
+}
+
+func TestRouterDoesNotSpeakTypedTurn(t *testing.T) {
+	r, _, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("noted")}, StopReason: provider.StopEndTurn},
+	})
+	r.synth = &fakeSynth{audio: []byte("opus"), ext: ".ogg"}
+
+	rep := &voiceReply{}
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In:       Inbound{Chat: "c", User: "u", Text: "just typing"},
+		Reply:    rep,
+		Approver: &yesApprover{},
+	})
+	if len(rep.clips) != 0 {
+		t.Errorf("a typed turn should not be spoken, got %+v", rep.clips)
+	}
+}
+
+func TestRouterSpeakDegradesWhenChannelCannot(t *testing.T) {
+	r, _, _ := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("here you go")}, StopReason: provider.StopEndTurn},
+	})
+	r.transcriber = fakeTranscriber{text: "read it out"}
+	synth := &fakeSynth{audio: []byte("opus"), ext: ".ogg"}
+	r.synth = synth
+
+	// captureReply does not implement VoiceReply, so the reply stays text only.
+	rep := &captureReply{}
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In:       Inbound{Chat: "c", User: "u", Audio: []Clip{{Data: []byte("ogg"), Ext: ".ogg"}}},
+		Reply:    rep,
+		Approver: &yesApprover{},
+	})
+	if len(synth.texts) != 0 {
+		t.Errorf("a channel that cannot carry audio should not trigger synthesis, got %v", synth.texts)
+	}
+	if rep.text() != "here you go" {
+		t.Errorf("text reply should still land, got %q", rep.text())
+	}
+}
+
+func TestSpeakableStripsCodeAndCaps(t *testing.T) {
+	in := "here is the plan\n```go\nfunc main() {}\n```\nthat is all"
+	got := speakable(in)
+	if strings.Contains(got, "func main") || strings.Contains(got, "```") {
+		t.Errorf("code should be stripped, got %q", got)
+	}
+	if !strings.Contains(got, "here is the plan") || !strings.Contains(got, "that is all") {
+		t.Errorf("prose should survive, got %q", got)
+	}
+	long := speakable(strings.Repeat("a", 2000))
+	if len([]rune(long)) > 1201 {
+		t.Errorf("speakable should cap length, got %d runes", len([]rune(long)))
 	}
 }
 
