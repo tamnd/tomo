@@ -43,6 +43,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newOnboardCmd())
 	root.AddCommand(newSessionsCmd())
+	root.AddCommand(newCronCmd())
 	return root
 }
 

@@ -127,6 +127,12 @@ func (m *IMessage) onMessage(ctx context.Context, msg imsg) {
 	go m.handler(ctx, x)
 }
 
+// Post pushes a message to a handle outside a reply, for scheduled runs. It
+// implements channel.Poster.
+func (m *IMessage) Post(_ context.Context, chat, text string) error {
+	return m.deliver(chat, text)
+}
+
 func (m *IMessage) deliver(handle, text string) error {
 	if m.send != nil {
 		return m.send(handle, text)

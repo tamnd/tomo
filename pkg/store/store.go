@@ -42,6 +42,23 @@ CREATE TABLE IF NOT EXISTS bindings (
 	session    TEXT NOT NULL,
 	PRIMARY KEY (channel, chat)
 );
+CREATE TABLE IF NOT EXISTS cron_jobs (
+	id         INTEGER PRIMARY KEY,
+	spec       TEXT NOT NULL,
+	prompt     TEXT NOT NULL,
+	channel    TEXT NOT NULL,
+	chat       TEXT NOT NULL,
+	enabled    INTEGER NOT NULL DEFAULT 1,
+	last_run   TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cron_runs (
+	id         INTEGER PRIMARY KEY,
+	job_id     INTEGER NOT NULL,
+	started_at TEXT NOT NULL,
+	ok         INTEGER NOT NULL,
+	output     TEXT NOT NULL
+);
 `
 
 // Open opens (creating if needed) the ledger at path.
