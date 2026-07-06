@@ -32,7 +32,19 @@ type Config struct {
 	Providers    map[string]Provider `yaml:"providers"`
 	Agent        Agent               `yaml:"agent"`
 	Policy       Policy              `yaml:"policy"`
+	Channels     Channels            `yaml:"channels"`
 	DataDir      string              `yaml:"data_dir"`
+}
+
+// Channels configures the front doors serve turns on.
+type Channels struct {
+	Telegram Telegram `yaml:"telegram"`
+}
+
+// Telegram holds the bot token and the chats allowed to reach it.
+type Telegram struct {
+	Token      string  `yaml:"token"`
+	AllowChats []int64 `yaml:"allow_chats"`
 }
 
 // Policy mirrors the policy section without depending on pkg/policy.

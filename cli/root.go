@@ -40,6 +40,7 @@ func newRoot() *cobra.Command {
 	}
 	root.PersistentFlags().String("config", "", "config file (default ~/.tomo/config.yaml)")
 	root.AddCommand(newChatCmd())
+	root.AddCommand(newServeCmd())
 	root.AddCommand(newOnboardCmd())
 	root.AddCommand(newSessionsCmd())
 	return root
