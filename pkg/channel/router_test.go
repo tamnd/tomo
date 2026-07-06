@@ -145,6 +145,54 @@ func TestRouterApprovalAndToolNotice(t *testing.T) {
 	}
 }
 
+func TestSessionCommandBindsChat(t *testing.T) {
+	r, _, st := newTestRouter(t, nil)
+	rep := &captureReply{}
+	r.HandlerFor("web")(context.Background(), Exchange{
+		In: Inbound{Chat: "c1", Text: "/session work"}, Reply: rep, Approver: &yesApprover{},
+	})
+	if !rep.done {
+		t.Error("command should finalize the reply")
+	}
+	if !strings.Contains(strings.Join(rep.notices, "\n"), "work") {
+		t.Errorf("notices = %v", rep.notices)
+	}
+	name, ok, err := st.BindingFor("web", "c1")
+	if err != nil || !ok || name != "work" {
+		t.Errorf("binding = %q ok=%v err=%v", name, ok, err)
+	}
+}
+
+func TestSharedSessionAcrossChannels(t *testing.T) {
+	r, _, st := newTestRouter(t, []*provider.Response{
+		{Blocks: []provider.Block{provider.Text("from telegram")}, StopReason: provider.StopEndTurn},
+		{Blocks: []provider.Block{provider.Text("from web")}, StopReason: provider.StopEndTurn},
+	})
+
+	// Bind a telegram chat and a web chat to the same session name.
+	r.HandlerFor("telegram")(context.Background(), Exchange{In: Inbound{Chat: "tg1", Text: "/session shared"}, Reply: &captureReply{}, Approver: &yesApprover{}})
+	r.HandlerFor("web")(context.Background(), Exchange{In: Inbound{Chat: "web1", Text: "/session shared"}, Reply: &captureReply{}, Approver: &yesApprover{}})
+
+	// A message from each channel now lands in the same "shared" session.
+	r.HandlerFor("telegram")(context.Background(), Exchange{In: Inbound{Chat: "tg1", User: "u_tg", Text: "hi from phone"}, Reply: &captureReply{}, Approver: &yesApprover{}})
+	r.HandlerFor("web")(context.Background(), Exchange{In: Inbound{Chat: "web1", User: "u_web", Text: "hi from browser"}, Reply: &captureReply{}, Approver: &yesApprover{}})
+
+	sess, err := st.Session("shared", "telegram")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := st.Messages(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("shared session has %d messages, want 4: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Blocks[0].Text != "hi from phone" || msgs[2].Blocks[0].Text != "hi from browser" {
+		t.Errorf("ledger order = %+v", msgs)
+	}
+}
+
 func TestInboundMessageOrdersTextThenImages(t *testing.T) {
 	in := Inbound{Text: "look", Images: []provider.Block{{Type: provider.BlockImage, MediaType: "image/png", Data: "aGk="}}}
 	m := in.Message()

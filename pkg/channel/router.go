@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/tamnd/tomo/pkg/agent"
@@ -44,7 +45,11 @@ func (r *Router) HandlerFor(name string) Handler {
 func (r *Router) handle(ctx context.Context, x Exchange) {
 	defer x.Reply.Done()
 
-	key := x.Channel + ":" + x.In.Chat
+	if r.command(x) {
+		return
+	}
+
+	key := r.sessionKey(x)
 	unlock := r.lock(key)
 	defer unlock()
 
@@ -74,6 +79,36 @@ func (r *Router) handle(ctx context.Context, x Exchange) {
 	if err != nil && ctx.Err() == nil {
 		x.Reply.Notice("error: " + err.Error())
 	}
+}
+
+// sessionKey is the ledger name for this chat: the session it is bound to if
+// any, otherwise the channel-scoped default. Binding is how one conversation
+// becomes reachable from more than one channel.
+func (r *Router) sessionKey(x Exchange) string {
+	if name, ok, err := r.store.BindingFor(x.Channel, x.In.Chat); err == nil && ok {
+		return name
+	}
+	return x.Channel + ":" + x.In.Chat
+}
+
+// command intercepts the small set of control messages the router answers
+// itself, before any model call. It returns true when it handled the message.
+func (r *Router) command(x Exchange) bool {
+	text := strings.TrimSpace(x.In.Text)
+	if text != "/session" && !strings.HasPrefix(text, "/session ") {
+		return false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(text, "/session"))
+	if name == "" {
+		x.Reply.Notice("current session: " + r.sessionKey(x))
+		return true
+	}
+	if err := r.store.Bind(x.Channel, x.In.Chat, name); err != nil {
+		x.Reply.Notice("could not link session: " + err.Error())
+		return true
+	}
+	x.Reply.Notice("linked this chat to session: " + name)
+	return true
 }
 
 // lock serializes messages within one conversation so two arriving at once do

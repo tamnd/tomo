@@ -42,6 +42,29 @@ policy:
   rules:
     # shell: deny
     # write_file: allow
+
+# Channels are the front doors 'tomo serve' opens. The web chat is always on;
+# the rest start only when configured. Each names the conversations it will
+# serve, so a leaked token or a stray invite does not hand anyone an agent.
+# Send '/session NAME' from any chat to bind it to a shared session; bind two
+# channels to the same name to carry one conversation between them.
+channels:
+  # telegram:
+  #   token: ${TELEGRAM_BOT_TOKEN}
+  #   allow_chats: [123456789]
+
+  # discord:
+  #   token: ${DISCORD_BOT_TOKEN}
+  #   allow_channels: ["000000000000000000"]
+
+  # slack:
+  #   app_token: ${SLACK_APP_TOKEN}
+  #   bot_token: ${SLACK_BOT_TOKEN}
+  #   allow_channels: ["C0000000000"]
+
+  # imessage:        # macOS only, needs Full Disk Access
+  #   enabled: true
+  #   allow_handles: ["+15555550123"]
 `
 
 func newOnboardCmd() *cobra.Command {

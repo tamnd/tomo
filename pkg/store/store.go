@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS messages (
 	created_at TEXT NOT NULL,
 	UNIQUE (session_id, seq)
 );
+CREATE TABLE IF NOT EXISTS bindings (
+	channel    TEXT NOT NULL,
+	chat       TEXT NOT NULL,
+	session    TEXT NOT NULL,
+	PRIMARY KEY (channel, chat)
+);
 `
 
 // Open opens (creating if needed) the ledger at path.
@@ -155,6 +161,29 @@ func (s *Store) Messages(sessionID int64) ([]provider.Message, error) {
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// Bind points a channel's chat at a named session, so the same conversation is
+// reachable from more than one channel. Re-binding replaces the old target.
+func (s *Store) Bind(channel, chat, session string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO bindings (channel, chat, session) VALUES (?, ?, ?)
+		 ON CONFLICT(channel, chat) DO UPDATE SET session = excluded.session`,
+		channel, chat, session)
+	return err
+}
+
+// BindingFor returns the session a chat is bound to, if any.
+func (s *Store) BindingFor(channel, chat string) (string, bool, error) {
+	var session string
+	err := s.db.QueryRow(`SELECT session FROM bindings WHERE channel = ? AND chat = ?`, channel, chat).Scan(&session)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return session, true, nil
 }
 
 func scanSession(row *sql.Row) (*Session, error) {
