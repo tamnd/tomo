@@ -11,6 +11,7 @@ import (
 	"github.com/tamnd/tomo/pkg/agent"
 	"github.com/tamnd/tomo/pkg/channel"
 	"github.com/tamnd/tomo/pkg/channel/discord"
+	"github.com/tamnd/tomo/pkg/channel/imessage"
 	"github.com/tamnd/tomo/pkg/channel/slack"
 	"github.com/tamnd/tomo/pkg/channel/telegram"
 	"github.com/tamnd/tomo/pkg/channel/webchat"
@@ -66,6 +67,9 @@ func newServeCmd() *cobra.Command {
 			}
 			if sl := cfg.Channels.Slack; sl.AppToken != "" {
 				channels = append(channels, &slack.Slack{AppToken: sl.AppToken, BotToken: sl.BotToken, Allow: sl.AllowChannels})
+			}
+			if im := cfg.Channels.IMessage; im.Enabled {
+				channels = append(channels, &imessage.IMessage{Allow: im.AllowHandles, DBPath: im.DBPath})
 			}
 
 			out := cmd.OutOrStdout()
