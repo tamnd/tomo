@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,8 +12,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tamnd/tomo/pkg/agent"
+	"github.com/tamnd/tomo/pkg/builtin"
 	"github.com/tamnd/tomo/pkg/config"
 	"github.com/tamnd/tomo/pkg/memory"
+	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/store"
 	"github.com/tamnd/tomo/pkg/tool"
@@ -34,7 +35,13 @@ func newChatCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a, label, err := buildAgent(cfg, model)
+			tio := newTermIO(os.Stdin, cmd.OutOrStdout())
+			guard, closeAudit, err := buildGuard(cfg, tio)
+			if err != nil {
+				return err
+			}
+			defer closeAudit()
+			a, label, err := buildAgent(cfg, model, guard)
 			if err != nil {
 				return err
 			}
@@ -58,7 +65,7 @@ func newChatCmd() *cobra.Command {
 				persist = func(msgs []provider.Message) error { return st.Append(sess.ID, msgs) }
 				label += " · session " + session
 			}
-			return runREPL(cmd, a, label, history, persist)
+			return runREPL(cmd, tio, a, label, history, persist)
 		},
 	}
 	cmd.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
@@ -67,8 +74,8 @@ func newChatCmd() *cobra.Command {
 }
 
 // buildAgent assembles the provider, memory, and toolset shared by every
-// front end.
-func buildAgent(cfg *config.Config, model string) (*agent.Agent, string, error) {
+// front end, gated by the given guard.
+func buildAgent(cfg *config.Config, model string, guard agent.Gate) (*agent.Agent, string, error) {
 	name, modelID, pc, err := cfg.Resolve(model)
 	if err != nil {
 		return nil, "", err
@@ -82,34 +89,58 @@ func buildAgent(cfg *config.Config, model string) (*agent.Agent, string, error) 
 	if err != nil {
 		return nil, "", err
 	}
+	reg := tool.NewRegistry(builtin.All()...)
+	for _, t := range mem.Tools() {
+		reg.Add(t)
+	}
 	a := &agent.Agent{
 		Provider:  p,
 		Model:     modelID,
 		System:    agent.SystemPrompt(time.Now(), index),
-		Tools:     tool.NewRegistry(mem.Tools()...),
+		Tools:     reg,
+		Gate:      guard,
 		MaxTokens: cfg.Agent.MaxTokens,
 		MaxTurns:  cfg.Agent.MaxTurns,
 	}
 	return a, name + "/" + modelID, nil
 }
 
-func runREPL(cmd *cobra.Command, a *agent.Agent, label string, history []provider.Message, persist func([]provider.Message) error) error {
+// buildGuard wires the policy engine, the given approver, and a file auditor.
+// The returned closer flushes the audit log.
+func buildGuard(cfg *config.Config, approver policy.Approver) (*policy.Guard, func(), error) {
+	engine := policy.New(policy.Config{
+		Read:  cfg.Policy.Read,
+		Net:   cfg.Policy.Net,
+		Write: cfg.Policy.Write,
+		Exec:  cfg.Policy.Exec,
+		Rules: cfg.Policy.Rules,
+	})
+	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+		return nil, nil, err
+	}
+	auditor, err := policy.OpenFileAuditor(filepath.Join(cfg.DataDir, "audit.log"))
+	if err != nil {
+		return nil, nil, err
+	}
+	return policy.NewGuard(engine, approver, auditor), func() { auditor.Close() }, nil
+}
+
+func runREPL(cmd *cobra.Command, tio *termIO, a *agent.Agent, label string, history []provider.Message, persist func([]provider.Message) error) error {
 	ctx := cmd.Context()
-	out := cmd.OutOrStdout()
+	out := tio.out
 	fmt.Fprintf(out, "tomo · %s · /new starts over, /exit leaves\n", label)
 	if len(history) > 0 {
 		fmt.Fprintf(out, "continuing with %d messages of history\n", len(history))
 	}
 
 	sink := &termSink{out: out}
-	in := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Fprint(out, "\nyou> ")
-		if !in.Scan() {
+		line, ok := tio.line()
+		if !ok {
 			fmt.Fprintln(out)
-			return in.Err()
+			return nil
 		}
-		line := strings.TrimSpace(in.Text())
 		switch line {
 		case "":
 			continue

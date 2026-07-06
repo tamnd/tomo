@@ -121,6 +121,64 @@ func TestTurnUnknownToolBecomesErrorResult(t *testing.T) {
 	}
 }
 
+// denyGate blocks one named tool and records taint observations.
+type denyGate struct {
+	block    string
+	ingested []tool.Class
+}
+
+func (d *denyGate) Allow(_ context.Context, name string, _ tool.Class, _ json.RawMessage) (bool, string) {
+	if name == d.block {
+		return false, "policy denies " + name
+	}
+	return true, ""
+}
+func (d *denyGate) Ingested(class tool.Class, _ bool) { d.ingested = append(d.ingested, class) }
+
+func TestTurnGateDeniedBecomesErrorResult(t *testing.T) {
+	p := &scriptProvider{responses: []*provider.Response{
+		{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t1", Name: "echo", Input: json.RawMessage(`{"s":"hi"}`)}},
+			StopReason: provider.StopToolUse,
+		},
+		{Blocks: []provider.Block{provider.Text("ok, understood")}, StopReason: provider.StopEndTurn},
+	}}
+	gate := &denyGate{block: "echo"}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), Gate: gate, MaxTurns: 5}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := turn[2].Blocks[0]
+	if !res.IsError || !strings.Contains(res.Content, "policy denies") {
+		t.Errorf("denied call result = %+v", res)
+	}
+	// A denied tool never runs, so the gate sees no ingest for it.
+	if len(gate.ingested) != 0 {
+		t.Errorf("denied tool should not report ingest: %v", gate.ingested)
+	}
+}
+
+func TestTurnGateObservesRanTools(t *testing.T) {
+	p := &scriptProvider{responses: []*provider.Response{
+		{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t1", Name: "echo", Input: json.RawMessage(`{"s":"hi"}`)}},
+			StopReason: provider.StopToolUse,
+		},
+		{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn},
+	}}
+	gate := &denyGate{block: "nothing"}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), Gate: gate, MaxTurns: 5}
+
+	if _, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(gate.ingested) != 1 || gate.ingested[0] != tool.ClassRead {
+		t.Errorf("gate should observe the run tool's class: %v", gate.ingested)
+	}
+}
+
 func TestTurnCap(t *testing.T) {
 	// A provider that always wants another tool round hits the cap.
 	loop := &provider.Response{

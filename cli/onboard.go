@@ -29,6 +29,19 @@ providers:
 agent:
   max_tokens: 8192
   max_turns: 24
+
+# Every tool call passes this gate. Class defaults shown are the built-in
+# safe posture: reads and network run, writes and code execution ask first.
+# Once a session fetches untrusted content, writes and exec escalate to ask
+# even if allowed here. Per-tool rules override the class default.
+policy:
+  read: allow
+  net: allow
+  write: ask
+  exec: ask
+  rules:
+    # shell: deny
+    # write_file: allow
 `
 
 func newOnboardCmd() *cobra.Command {

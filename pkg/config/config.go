@@ -25,12 +25,23 @@ type Agent struct {
 	MaxTurns  int `yaml:"max_turns"`
 }
 
-// Config is the whole file.
+// Config is the whole file. Policy is left as a raw map so pkg/config need
+// not import pkg/policy; the cli decodes it into policy.Config.
 type Config struct {
 	DefaultModel string              `yaml:"default_model"`
 	Providers    map[string]Provider `yaml:"providers"`
 	Agent        Agent               `yaml:"agent"`
+	Policy       Policy              `yaml:"policy"`
 	DataDir      string              `yaml:"data_dir"`
+}
+
+// Policy mirrors the policy section without depending on pkg/policy.
+type Policy struct {
+	Read  string            `yaml:"read"`
+	Net   string            `yaml:"net"`
+	Write string            `yaml:"write"`
+	Exec  string            `yaml:"exec"`
+	Rules map[string]string `yaml:"rules"`
 }
 
 // DefaultPath returns ~/.tomo/config.yaml.
