@@ -15,8 +15,9 @@ The starter config points at Anthropic and reads the key from your environment, 
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Pointing at a local or self-hosted model instead?
+Pointing at a local model or a hosted OpenAI-compatible gateway instead?
 Set that provider's `base_url` in the config after the next step, and export whatever key it expects (or none).
+See [configuration](/guides/configuration/) for a provider block you can copy.
 
 ## 2. Onboard
 
