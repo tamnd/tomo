@@ -37,7 +37,7 @@ Commands that take `--model` (or `-m`) override it per run.
 
 `providers` maps a name to a backend.
 Two types are supported: `anthropic`, and `openai` for anything speaking the OpenAI chat completions dialect.
-Point the OpenAI type at a local server or a gateway with `base_url`.
+Point the OpenAI type at a local server or a hosted gateway with `base_url`.
 
 ```yaml
 providers:
@@ -49,10 +49,17 @@ providers:
     type: openai
     base_url: http://gamingpc:8000/v1
     api_key: ${LOCAL_API_KEY}
+
+  gateway:
+    type: openai
+    base_url: https://your-gateway.example/v1
+    api_key: ${GATEWAY_API_KEY}
 ```
 
 Each provider takes `type`, `api_key`, and, for the OpenAI dialect, `base_url`.
-With the `local` provider above, `local/some-model` routes there, so you can run against a local model with no code change.
+The provider key is yours to choose; the model after the slash is whatever name the endpoint serves.
+So `local/some-model` routes to the local server and `gateway/some-model` to the hosted one, with no code change.
+Any endpoint that speaks the OpenAI chat completions dialect and returns `tool_calls` drives the full agent loop, so a self-hosted model and a hosted gateway configure the same way.
 
 ## Agent
 
