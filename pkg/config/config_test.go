@@ -46,6 +46,34 @@ func TestLoadMissingFileNamesTheFix(t *testing.T) {
 	}
 }
 
+// TestLoadOlderConfigStillLoads pins the upgrade promise: a minimal config from
+// an earlier version, with none of the sections later releases added, still
+// loads and picks up defaults rather than failing. Unknown keys a newer config
+// might carry are ignored by the decoder, so a config never has to move in
+// lockstep with the binary.
+func TestLoadOlderConfigStillLoads(t *testing.T) {
+	t.Setenv("TOMO_OLD_KEY", "sk-old")
+	cfg, err := Load(write(t, `
+default_model: anthropic/claude-fable-5
+providers:
+  anthropic:
+    type: anthropic
+    api_key: ${TOMO_OLD_KEY}
+# a key from a future version the loader has never heard of:
+future_feature:
+  enabled: true
+`))
+	if err != nil {
+		t.Fatalf("older config failed to load: %v", err)
+	}
+	if cfg.Agent.MaxTurns != 24 || cfg.DataDir == "" {
+		t.Errorf("defaults not applied to older config: %+v", cfg.Agent)
+	}
+	if _, _, pc, err := cfg.Resolve(""); err != nil || pc.APIKey != "sk-old" {
+		t.Errorf("older config did not resolve its provider: %+v %v", pc, err)
+	}
+}
+
 func TestResolve(t *testing.T) {
 	cfg := &Config{
 		DefaultModel: "local/qwen3-32b",
