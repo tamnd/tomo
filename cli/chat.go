@@ -44,7 +44,7 @@ func newChatCmd() *cobra.Command {
 				return err
 			}
 			defer closeAudit()
-			a, label, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox}, guard)
+			a, label, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
 			if err != nil {
 				return err
 			}
@@ -85,6 +85,7 @@ type agentBuild struct {
 	memoryDir string // empty means <data>/memory
 	skillsDir string // empty means <data>/skills
 	sandbox   string // exec sandbox mode, empty means none (unconfined)
+	workspace string // working directory for the file and shell tools, empty means the config default
 }
 
 // buildAgent assembles the provider, memory, and toolset shared by every
@@ -110,11 +111,12 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 	if err != nil {
 		return nil, "", err
 	}
-	box, err := sandbox.New(b.sandbox)
+	workspace := orDefault(b.workspace, cfg.Workspace)
+	box, err := sandbox.New(b.sandbox, workspace)
 	if err != nil {
 		return nil, "", err
 	}
-	reg := tool.NewRegistry(builtin.All(box)...)
+	reg := tool.NewRegistry(builtin.All(box, workspace)...)
 	for _, t := range mem.Tools() {
 		reg.Add(t)
 	}
@@ -127,7 +129,7 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 	a := &agent.Agent{
 		Provider:  p,
 		Model:     modelID,
-		System:    agent.SystemPrompt(time.Now(), b.persona, index, skillIndex),
+		System:    agent.SystemPrompt(time.Now(), workspace, b.persona, index, skillIndex),
 		Tools:     reg,
 		Gate:      guard,
 		MaxTokens: cfg.Agent.MaxTokens,

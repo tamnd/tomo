@@ -39,6 +39,7 @@ type Config struct {
 	MCP          MCP                 `yaml:"mcp"`
 	Workers      map[string]Worker   `yaml:"workers"`
 	DataDir      string              `yaml:"data_dir"`
+	Workspace    string              `yaml:"workspace"`
 }
 
 // Worker is a named specialist that handles some conversations in its own
@@ -46,11 +47,12 @@ type Config struct {
 // channel:chat bindings that route to it. Anything left unset falls back to the
 // top-level default. The default worker, tomo, needs no entry here.
 type Worker struct {
-	Persona  string   `yaml:"persona"`  // extra system-prompt lines that set its role
-	Model    string   `yaml:"model"`    // provider/model override, empty means the default
-	Policy   Policy   `yaml:"policy"`   // its own gate, merged over the top-level policy
-	Sandbox  string   `yaml:"sandbox"`  // exec sandbox for this worker, empty means the default
-	Channels []string `yaml:"channels"` // channel:chat keys whose messages route to it
+	Persona   string   `yaml:"persona"`   // extra system-prompt lines that set its role
+	Model     string   `yaml:"model"`     // provider/model override, empty means the default
+	Policy    Policy   `yaml:"policy"`    // its own gate, merged over the top-level policy
+	Sandbox   string   `yaml:"sandbox"`   // exec sandbox for this worker, empty means the default
+	Workspace string   `yaml:"workspace"` // working directory for this worker, empty means the default
+	Channels  []string `yaml:"channels"`  // channel:chat keys whose messages route to it
 }
 
 // MCP lists the Model Context Protocol servers to attach on startup. Each one
@@ -165,6 +167,7 @@ func (c *Config) applyDefaults() {
 			c.DataDir = filepath.Join(home, ".tomo")
 		}
 	}
+	c.Workspace = resolveWorkspace(c.Workspace)
 	if c.Heartbeat.Enabled {
 		if c.Heartbeat.Every == "" {
 			c.Heartbeat.Every = "@every 30m"
@@ -176,6 +179,30 @@ func (c *Config) applyDefaults() {
 			c.Heartbeat.Channel = "web"
 		}
 	}
+}
+
+// resolveWorkspace turns a configured workspace into an absolute path the tools
+// can anchor to. An empty value means the directory tomo was launched from,
+// which keeps the old behavior where a relative path resolved against the
+// process cwd. A leading ~ expands to the home dir. A path that cannot be made
+// absolute is left as given rather than failing the whole load.
+func resolveWorkspace(ws string) string {
+	ws = strings.TrimSpace(ws)
+	if ws == "~" || strings.HasPrefix(ws, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			ws = filepath.Join(home, ws[1:])
+		}
+	}
+	if ws == "" {
+		if wd, err := os.Getwd(); err == nil {
+			return wd
+		}
+		return "."
+	}
+	if abs, err := filepath.Abs(ws); err == nil {
+		return abs
+	}
+	return ws
 }
 
 // Resolve splits a provider/model spec against the configured providers. An

@@ -20,18 +20,24 @@ import (
 	"github.com/tamnd/tomo/pkg/tool"
 )
 
-// All returns the full builtin set. The shell tool runs its command through the
-// given sandbox; a nil sandbox means unconfined, the same as passing the none
-// mode, so callers that do not care about confinement can pass nil.
-func All(exec sandbox.Sandbox) []tool.Tool {
-	return []tool.Tool{shellTool(exec), readFileTool(), writeFileTool(), fetchTool(), timeTool()}
+// All returns the full builtin set, rooted at workspace: the file tools take a
+// relative path as relative to it, and the shell tool runs there through the
+// given sandbox. A nil sandbox means unconfined, the same as passing the none
+// mode, so callers that do not care about confinement can pass nil. An empty
+// workspace anchors relative paths to the process working directory, which is
+// the behavior a plain install has always had.
+func All(exec sandbox.Sandbox, workspace string) []tool.Tool {
+	return []tool.Tool{shellTool(exec, workspace), readFileTool(workspace), writeFileTool(workspace), fetchTool(), timeTool()}
 }
 
-func shellTool(box sandbox.Sandbox) tool.Tool {
+func shellTool(box sandbox.Sandbox, workspace string) tool.Tool {
 	if box == nil {
-		box, _ = sandbox.New("none")
+		box, _ = sandbox.New("none", workspace)
 	}
 	desc := "Run a shell command and return its combined output. Use for quick, local, reversible actions."
+	if workspace != "" {
+		desc += " It runs in " + workspace + ", your working directory."
+	}
 	if box.Name() != "none" {
 		desc += " It runs inside a " + box.Name() + " sandbox: the filesystem and network are restricted, so a command may be refused access the kernel enforces."
 	}
@@ -78,10 +84,10 @@ func shellTool(box sandbox.Sandbox) tool.Tool {
 	}
 }
 
-func readFileTool() tool.Tool {
+func readFileTool(workspace string) tool.Tool {
 	return tool.Tool{
 		Name:        "read_file",
-		Description: "Read a UTF-8 text file from disk and return its contents.",
+		Description: "Read a UTF-8 text file from disk and return its contents. A relative path is taken relative to your working directory.",
 		Class:       tool.ClassRead,
 		Schema: json.RawMessage(`{
 			"type": "object",
@@ -95,7 +101,7 @@ func readFileTool() tool.Tool {
 			if err := json.Unmarshal(input, &v); err != nil {
 				return "", err
 			}
-			raw, err := os.ReadFile(expand(v.Path))
+			raw, err := os.ReadFile(resolve(workspace, v.Path))
 			if err != nil {
 				return "", err
 			}
@@ -104,10 +110,10 @@ func readFileTool() tool.Tool {
 	}
 }
 
-func writeFileTool() tool.Tool {
+func writeFileTool(workspace string) tool.Tool {
 	return tool.Tool{
 		Name:        "write_file",
-		Description: "Write text to a file, creating parent directories and overwriting any existing file.",
+		Description: "Write text to a file, creating parent directories and overwriting any existing file. A relative path is taken relative to your working directory.",
 		Class:       tool.ClassWrite,
 		Schema: json.RawMessage(`{
 			"type": "object",
@@ -125,7 +131,7 @@ func writeFileTool() tool.Tool {
 			if err := json.Unmarshal(input, &v); err != nil {
 				return "", err
 			}
-			path := expand(v.Path)
+			path := resolve(workspace, v.Path)
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				return "", err
 			}
@@ -209,13 +215,23 @@ func timeTool() tool.Tool {
 	}
 }
 
-func expand(path string) string {
+// resolve turns a tool path into an absolute one. A leading ~ expands to the
+// home dir; an already-absolute path is honored as given; a relative path is
+// taken relative to the workspace, so the model can say "notes.txt" and land in
+// the working directory instead of wherever the process happened to start. An
+// empty workspace leaves a relative path untouched, which resolves against the
+// process cwd exactly as before.
+func resolve(workspace, path string) string {
 	if path == "~" || len(path) >= 2 && path[:2] == "~/" {
 		if home, err := os.UserHomeDir(); err == nil {
 			return filepath.Join(home, path[1:])
 		}
+		return path
 	}
-	return path
+	if workspace == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(workspace, path)
 }
 
 func trim(s string, n int) string {

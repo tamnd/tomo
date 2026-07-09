@@ -15,7 +15,7 @@ import (
 
 func find(t *testing.T, name string) tool.Tool {
 	t.Helper()
-	for _, tl := range All(nil) {
+	for _, tl := range All(nil, "") {
 		if tl.Name == name {
 			return tl
 		}
@@ -32,7 +32,7 @@ func TestClassesAreDeclared(t *testing.T) {
 		"fetch":      tool.ClassNet,
 		"time":       tool.ClassRead,
 	}
-	for _, tl := range All(nil) {
+	for _, tl := range All(nil, "") {
 		if want[tl.Name] != tl.Class {
 			t.Errorf("%s class = %s, want %s", tl.Name, tl.Class, want[tl.Name])
 		}
@@ -67,6 +67,51 @@ func TestReadWriteRoundTrip(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("file not created: %v", err)
+	}
+}
+
+func TestWorkspaceRootsRelativePaths(t *testing.T) {
+	dir := t.TempDir()
+	wr := writeFileTool(dir)
+	rd := readFileTool(dir)
+
+	// A relative path lands under the workspace, not the process cwd.
+	out, err := wr.Run(context.Background(), mustJSON(map[string]string{"path": "sub/note.txt", "content": "in workspace"}))
+	if err != nil || !strings.Contains(out, "wrote") {
+		t.Fatalf("write: %q %v", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sub", "note.txt")); err != nil {
+		t.Errorf("relative write did not land in the workspace: %v", err)
+	}
+	got, err := rd.Run(context.Background(), mustJSON(map[string]string{"path": "sub/note.txt"}))
+	if err != nil || got != "in workspace" {
+		t.Errorf("relative read: %q %v", got, err)
+	}
+
+	// An absolute path is honored as given, outside the workspace.
+	abs := filepath.Join(t.TempDir(), "elsewhere.txt")
+	if _, err := wr.Run(context.Background(), mustJSON(map[string]string{"path": abs, "content": "absolute"})); err != nil {
+		t.Fatalf("absolute write: %v", err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		t.Errorf("absolute write not honored: %v", err)
+	}
+}
+
+func TestResolve(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	cases := []struct {
+		ws, path, want string
+	}{
+		{"/work", "notes.txt", filepath.Join("/work", "notes.txt")},
+		{"/work", "/etc/hosts", "/etc/hosts"},
+		{"", "notes.txt", "notes.txt"},
+		{"/work", "~/x", filepath.Join(home, "x")},
+	}
+	for _, c := range cases {
+		if got := resolve(c.ws, c.path); got != c.want {
+			t.Errorf("resolve(%q, %q) = %q, want %q", c.ws, c.path, got, c.want)
+		}
 	}
 }
 
