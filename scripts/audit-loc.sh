@@ -22,6 +22,7 @@ PACKAGES=(
   "pkg/skill|the skills scanner and manifest parser for runtime SKILL.md files"
   "pkg/channel|the router, the driver registry, and per-channel allow-list wiring"
   "pkg/tool|the tool registry and capability classes the gate reasons over"
+  "pkg/netguard|the loopback classifier that keeps the web surface private by default"
 )
 
 # BUDGET caps the security-critical total. Raise it deliberately in a PR when
