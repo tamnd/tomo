@@ -78,7 +78,7 @@ func (g *Guard) Allow(ctx context.Context, name string, class tool.Class, input 
 		Time:     g.stamp(),
 		Tool:     name,
 		Class:    class,
-		Input:    input,
+		Input:    Scrub(input), // the log records what ran, never the secret it carried
 		Decision: dec,
 		Reason:   reason,
 		Tainted:  tainted,

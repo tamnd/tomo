@@ -13,6 +13,8 @@ import (
 
 	"github.com/tamnd/tomo/pkg/channel"
 	"github.com/tamnd/tomo/pkg/config"
+	"github.com/tamnd/tomo/pkg/doctor"
+	"github.com/tamnd/tomo/pkg/netguard"
 	// Channel drivers register themselves by name in init(). The serve command
 	// reaches them through the registry, so it never names one directly; adding
 	// a channel is adding an import here (or letting the scaffold do it).
@@ -39,6 +41,18 @@ func newServeCmd() *cobra.Command {
 			cfg, err := loadConfig(cmd)
 			if err != nil {
 				return err
+			}
+
+			// Boot behind the same checks doctor runs, so serve refuses to start
+			// half-configured instead of failing mid-turn. The fix is named.
+			if results := doctor.Check(cfg); !doctor.OK(results) {
+				out := cmd.OutOrStderr()
+				for _, r := range results {
+					if !r.OK {
+						fmt.Fprintf(out, "%s %s: %s\n", mark(false), r.Name, r.Detail)
+					}
+				}
+				return errCheckFailed
 			}
 
 			st, err := store.Open(filepath.Join(cfg.DataDir, "tomo.db"))
@@ -81,6 +95,9 @@ func newServeCmd() *cobra.Command {
 			}
 
 			fmt.Fprintf(out, "tomo serving on http://%s\n", addr)
+			if !netguard.IsLoopback(addr) {
+				fmt.Fprintf(out, "  warning: %s is not loopback; the web chat is reachable from other hosts\n", addr)
+			}
 			for _, ch := range channels {
 				fmt.Fprintf(out, "  channel: %s\n", ch.Name())
 			}

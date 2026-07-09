@@ -10,7 +10,15 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # On a PR the only job is `goreleaser check`, which validates the release
+  # config. Nothing but the config or the module graph can break it, so limit
+  # the PR run to those paths and keep it off every other PR's critical path.
   pull_request:
+    paths:
+      - ".goreleaser.yaml"
+      - ".github/workflows/release.yml"
+      - "go.mod"
+      - "go.sum"
   workflow_dispatch:
 
 permissions:
