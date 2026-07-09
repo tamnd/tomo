@@ -32,6 +32,7 @@ type Config struct {
 	Providers    map[string]Provider `yaml:"providers"`
 	Agent        Agent               `yaml:"agent"`
 	Policy       Policy              `yaml:"policy"`
+	Sandbox      string              `yaml:"sandbox"`
 	Channels     Channels            `yaml:"channels"`
 	Heartbeat    Heartbeat           `yaml:"heartbeat"`
 	Voice        Voice               `yaml:"voice"`
@@ -48,6 +49,7 @@ type Worker struct {
 	Persona  string   `yaml:"persona"`  // extra system-prompt lines that set its role
 	Model    string   `yaml:"model"`    // provider/model override, empty means the default
 	Policy   Policy   `yaml:"policy"`   // its own gate, merged over the top-level policy
+	Sandbox  string   `yaml:"sandbox"`  // exec sandbox for this worker, empty means the default
 	Channels []string `yaml:"channels"` // channel:chat keys whose messages route to it
 }
 
@@ -90,42 +92,20 @@ type Heartbeat struct {
 	Chat    string `yaml:"chat"`    // chat id within that channel
 }
 
-// Channels configures the front doors serve turns on.
-type Channels struct {
-	Telegram Telegram `yaml:"telegram"`
-	Discord  Discord  `yaml:"discord"`
-	Slack    Slack    `yaml:"slack"`
-	IMessage IMessage `yaml:"imessage"`
-}
-
-// Telegram holds the bot token and the chats allowed to reach it.
-type Telegram struct {
-	Token      string  `yaml:"token"`
-	AllowChats []int64 `yaml:"allow_chats"`
-}
-
-// Discord holds the bot token and the channel ids allowed to reach it.
-type Discord struct {
-	Token         string   `yaml:"token"`
-	AllowChannels []string `yaml:"allow_channels"`
-}
-
-// Slack holds the app-level and bot tokens and the channels allowed to reach
-// the bot. The app token opens the socket; the bot token posts messages.
-type Slack struct {
-	AppToken      string   `yaml:"app_token"`
-	BotToken      string   `yaml:"bot_token"`
-	AllowChannels []string `yaml:"allow_channels"`
-}
-
-// IMessage configures the macOS iMessage channel. It is off unless enabled,
-// since it reaches a real Messages account. AllowHandles lists the phone
-// numbers or emails permitted to drive the agent.
-type IMessage struct {
-	Enabled      bool     `yaml:"enabled"`
-	AllowHandles []string `yaml:"allow_handles"`
-	DBPath       string   `yaml:"db_path"`
-}
+// Channels configures the front doors serve turns on. It is a map from a
+// channel name to that channel's own settings, left untyped on purpose: the
+// config package does not know what a Telegram token or a Discord allow-list
+// is, only the channel's driver does. To add a channel you register a driver
+// and add a block here; the config schema never grows a field per channel.
+//
+//	channels:
+//	  telegram:
+//	    token: ${TELEGRAM_TOKEN}
+//	    allow_chats: [123456789]
+//	  discord:
+//	    token: ${DISCORD_TOKEN}
+//	    allow_channels: ["C0123"]
+type Channels map[string]map[string]any
 
 // Policy mirrors the policy section without depending on pkg/policy.
 type Policy struct {

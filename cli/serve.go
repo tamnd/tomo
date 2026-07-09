@@ -2,19 +2,25 @@ package cli
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tamnd/tomo/pkg/channel"
-	"github.com/tamnd/tomo/pkg/channel/discord"
-	"github.com/tamnd/tomo/pkg/channel/imessage"
-	"github.com/tamnd/tomo/pkg/channel/slack"
-	"github.com/tamnd/tomo/pkg/channel/telegram"
-	"github.com/tamnd/tomo/pkg/channel/webchat"
+	"github.com/tamnd/tomo/pkg/config"
+	// Channel drivers register themselves by name in init(). The serve command
+	// reaches them through the registry, so it never names one directly; adding
+	// a channel is adding an import here (or letting the scaffold do it).
+	_ "github.com/tamnd/tomo/pkg/channel/discord"
+	_ "github.com/tamnd/tomo/pkg/channel/imessage"
+	_ "github.com/tamnd/tomo/pkg/channel/slack"
+	_ "github.com/tamnd/tomo/pkg/channel/telegram"
+	_ "github.com/tamnd/tomo/pkg/channel/webchat"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/schedule"
 	"github.com/tamnd/tomo/pkg/store"
@@ -69,18 +75,9 @@ func newServeCmd() *cobra.Command {
 			router := channel.NewRouter(st, work, auditor, transcriber, synth)
 			defer router.WaitIdle()
 
-			channels := []channel.Channel{&webchat.WebChat{Addr: addr}}
-			if tg := cfg.Channels.Telegram; tg.Token != "" {
-				channels = append(channels, &telegram.Telegram{Token: tg.Token, Allow: tg.AllowChats})
-			}
-			if dc := cfg.Channels.Discord; dc.Token != "" {
-				channels = append(channels, &discord.Discord{Token: dc.Token, Allow: dc.AllowChannels})
-			}
-			if sl := cfg.Channels.Slack; sl.AppToken != "" {
-				channels = append(channels, &slack.Slack{AppToken: sl.AppToken, BotToken: sl.BotToken, Allow: sl.AllowChannels})
-			}
-			if im := cfg.Channels.IMessage; im.Enabled {
-				channels = append(channels, &imessage.IMessage{Allow: im.AllowHandles, DBPath: im.DBPath})
+			channels, err := openChannels(addr, cfg.Channels)
+			if err != nil {
+				return err
 			}
 
 			fmt.Fprintf(out, "tomo serving on http://%s\n", addr)
@@ -120,6 +117,50 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "web chat listen address")
 	cmd.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
 	return cmd
+}
+
+// openChannels turns the config's channel map into live channels through the
+// driver registry. The web chat is always opened, with the --addr flag folded
+// into whatever the config set, so the front door is on even with no config.
+// Every other name in the config is opened by its registered driver; a driver
+// that returns nil (configured but off) is skipped. Names are opened in sorted
+// order so the startup banner is stable.
+func openChannels(addr string, cfg config.Channels) ([]channel.Channel, error) {
+	web, err := channel.Open("web", mergeAddr(cfg["web"], addr))
+	if err != nil {
+		return nil, err
+	}
+	channels := []channel.Channel{web}
+
+	names := make([]string, 0, len(cfg))
+	for name := range cfg {
+		if name == "web" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		ch, err := channel.Open(name, channel.Settings(cfg[name]))
+		if err != nil {
+			return nil, fmt.Errorf("channel %s: %w", name, err)
+		}
+		if ch != nil {
+			channels = append(channels, ch)
+		}
+	}
+	return channels, nil
+}
+
+// mergeAddr layers the --addr flag over the web channel's config block so a
+// flag wins over a config value, and a config value wins over the default.
+func mergeAddr(web map[string]any, addr string) channel.Settings {
+	s := channel.Settings{}
+	maps.Copy(s, web)
+	if addr != "" {
+		s["addr"] = addr
+	}
+	return s
 }
 
 // heartbeatPrompt is the instruction the heartbeat job runs each beat. It
