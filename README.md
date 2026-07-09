@@ -58,7 +58,7 @@ Set `default_model` to any of them, or override it per worker.
 ## What it does
 
 - **Speaks through the chat apps you already use.** The local web chat is always on; Telegram, Discord, Slack, and iMessage start when you configure them, each with an allow-list.
-- **Acts with real tools, behind a gate.** Reads and network run, writes and code execution ask, and anything you have not allowed is declined. The moment a turn pulls in untrusted content, the session is tainted and writes and execution escalate to ask.
+- **Acts with real tools, behind a gate.** Reads and network run, writes and code execution ask, and anything you have not allowed is declined. The moment a turn pulls in untrusted content, the session is tainted and writes and execution escalate to ask. An optional OS-level sandbox can bound an approved command to its working tree and off the network.
 - **Remembers you across conversations.** A markdown memory tomo reads and writes itself, with a curator that reflects after substantial turns and stamps each note with where it came from.
 - **Gets better at your workflows.** It follows skills you write and drafts new ones from workflows it sees you repeat. Installing a skill is always your call.
 - **Works on its own when you want.** Scheduled prompts and a heartbeat pick up standing work on a cadence and report back only when there is something worth saying.

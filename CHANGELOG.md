@@ -2,6 +2,36 @@
 
 All notable changes to tomo are recorded here.
 
+## v0.2.1
+
+Makes tomo easier to audit, safer when it runs a shell, and easier to extend
+with a new channel.
+
+### Added
+
+- An opt-in OS-level sandbox for the shell tool. The gate still decides whether
+  a command runs; the sandbox bounds what it can touch once it does. Four modes
+  from `restricted` to `dev`, set top-level or per worker, enforced by Seatbelt
+  on macOS and namespaces on Linux. Off by default, so a plain install stays one
+  binary with nothing to configure, and the CGO-free build is unchanged.
+- A channel driver registry modeled on the standard library's `database/sql`.
+  Channels dispatch by name, so the core imports no specific channel and the
+  config is a plain map keyed by driver name. `tomo channel list` shows the
+  built-in drivers, and `tomo channel scaffold <name>` generates a starter
+  adapter that compiles.
+- `AUDITING.md`, which names the security-critical packages and what each
+  enforces, backed by a generated line-count table and a CI budget so the
+  "how much is there to read" number stays honest.
+
+### Changed
+
+- The `channels` config is now a map keyed by driver name. iMessage no longer
+  takes an `enabled` flag; the presence of its block turns it on, like the rest.
+
+### Security
+
+- Built with Go 1.26.5, which carries the `crypto/tls` fix for GO-2026-5856.
+
 ## v0.2.0
 
 Fills in the last install channel and sharpens the provider docs.

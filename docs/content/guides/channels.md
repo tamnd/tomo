@@ -77,17 +77,38 @@ channels:
 
 ## iMessage
 
-iMessage is macOS only and off unless you enable it, since it reaches a real Messages account.
+iMessage is macOS only, since it reaches a real Messages account.
 It reads the local Messages database, so the tomo process needs Full Disk Access granted in System Settings.
+The presence of the `imessage` block is what turns it on; there is no separate enable flag.
 
 ```yaml
 channels:
   imessage:        # macOS only, needs Full Disk Access
-    enabled: true
     allow_handles: ["+15555550123"]
 ```
 
 `allow_handles` lists the phone numbers or emails permitted to drive the agent.
+
+## Listing and adding channels
+
+Every channel above is a driver registered by name, and the core dispatches to it by that name the way the standard library dispatches a database driver.
+tomo never hard-wires a specific channel, so the set you can configure is whatever drivers are built in.
+
+See them with:
+
+```bash
+tomo channel list
+```
+
+Adding a new channel is one package against a small, typed interface.
+Scaffold a starter for it:
+
+```bash
+tomo channel scaffold matrix
+```
+
+That writes `pkg/channel/matrix/matrix.go` with the registration, the allow-list field, and the interface methods stubbed, then prints the two edits left to make it live: fill in `Run`, and add the side-effect import next to the other channel drivers.
+The result is plain Go in your tree, reviewable in a diff, and it compiles before you write a line of adapter logic.
 
 ## Sessions and binding
 

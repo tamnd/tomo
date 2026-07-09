@@ -100,6 +100,28 @@ See the [policy and safety guide](/guides/policy-and-safety/) for the full trust
 Each decision is one of `allow`, `ask`, or `deny`.
 A class you leave unset stays at the safe default shown above, and a value tomo does not recognize falls back to `ask` rather than opening up.
 
+## sandbox
+
+```yaml
+sandbox: none
+```
+
+The confinement an approved exec-class command runs under.
+The gate decides whether a command may run; the sandbox bounds what it can touch once it does.
+Off (`none`) by default, so a command runs with tomo's own privileges.
+Confinement is OS-enforced (Seatbelt on macOS, namespaces on Linux) with no container engine and no change to the CGO-free build.
+See the [policy and safety guide](/guides/policy-and-safety/).
+
+| Value | Filesystem | Network |
+|-------|------------|---------|
+| `none` | tomo's own privileges (default) | as tomo |
+| `restricted` | read the working tree, write nothing | none |
+| `standard` | read all but secrets, write the working tree and tmp | none |
+| `net` | same as `standard` | outbound allowed |
+| `dev` | `standard` plus build caches | outbound allowed |
+
+A worker may set its own `sandbox` to override this top-level value.
+
 ## channels
 
 ```yaml
@@ -164,16 +186,15 @@ channels:
 ```yaml
 channels:
   imessage:
-    enabled: true
     allow_handles: ["+15555550123"]
     db_path: ""
 ```
 
 macOS only, and needs Full Disk Access since it reaches a real Messages account.
+The presence of the `imessage` block is what turns it on; there is no separate flag.
 
 | Key | Meaning |
 |-----|---------|
-| `enabled` | Off unless set true. |
 | `allow_handles` | List of phone numbers or emails permitted to drive the agent. |
 | `db_path` | Path to the Messages database. Leave empty for the default location. |
 
@@ -261,6 +282,7 @@ workers:
     model: anthropic/claude-fable-5
     policy:
       write: deny
+    sandbox: standard
     channels: ["slack:C0RESEARCH"]
 ```
 
@@ -275,6 +297,7 @@ See the [workers guide](/guides/workers/).
 | `persona` | Extra system-prompt lines that set its role. |
 | `model` | Provider/model override. Empty means the default. |
 | `policy` | Its own gate, in the same shape as the top-level `policy`, merged over the top-level one. |
+| `sandbox` | Exec sandbox for this worker, overriding the top-level `sandbox`. Empty means the default. |
 | `channels` | List of `channel:chat` keys whose messages route to it. |
 
 ## data_dir
@@ -319,6 +342,9 @@ policy:
     shell: deny          # never run shell, whatever the class says
     write_file: allow    # trust file writes without a prompt
 
+# Confine an approved shell command at the OS level. none by default.
+sandbox: none
+
 # The web chat is always on; these start only when configured.
 channels:
   telegram:
@@ -332,7 +358,6 @@ channels:
     bot_token: ${SLACK_BOT_TOKEN}
     allow_channels: ["C0000000000"]
   imessage:              # macOS only, needs Full Disk Access
-    enabled: true
     allow_handles: ["+15555550123"]
 
 # Runs on a cadence against a checklist and stays quiet when there is nothing to say.
@@ -374,6 +399,7 @@ workers:
     model: anthropic/claude-fable-5
     policy:
       write: deny        # this one only reads and reports
+    sandbox: standard    # confine this worker's shell; others stay unconfined
     channels: ["slack:C0RESEARCH"]
 
 data_dir: ~/.tomo

@@ -102,6 +102,37 @@ Lists the conversations in the ledger as a table of name, channel, message count
 Prints a hint when there are none yet.
 Takes no positional arguments.
 
+## channel
+
+```
+tomo channel <subcommand>
+```
+
+Inspects and extends the set of channels `tomo serve` can open.
+Each channel is a driver registered by name, so the core dispatches to it the way the standard library dispatches a database driver.
+See the [channels guide](/guides/channels/).
+
+### channel list
+
+```
+tomo channel list
+```
+
+Lists the channel drivers built into this binary, one per line.
+Takes no positional arguments.
+
+### channel scaffold
+
+```
+tomo channel scaffold <name>
+```
+
+Generates a starter adapter package for a new channel at `pkg/channel/<name>/<name>.go`: the registration, the driver struct, the allow-list field, and the interface methods stubbed, with a `Run` that reports it is not implemented yet.
+The name must start with a lowercase letter and hold only lowercase letters, digits, and underscores.
+It refuses to overwrite an existing driver or directory.
+On success it prints the two edits left to wire it in: fill in `Run`, and add the side-effect import next to the other channel drivers.
+The output is plain Go that compiles as generated.
+
 ## cron
 
 ```

@@ -32,7 +32,10 @@ The important part: the gate lives in tomo's own code, below the model, so a jai
 There is one more move that matters.
 The moment a turn pulls in untrusted content from the web or a file, the session is tainted, and writes and execution escalate to ask even if you had allowed them.
 So text fetched off a page cannot quietly drive your shell.
-The [policy and safety](/guides/policy-and-safety/) guide is the whole trust model in depth: capability classes, per-tool rules, taint, and what tomo will never do by default.
+
+The gate decides whether a command runs; an optional OS-level sandbox decides how much it can touch once it does.
+It is off by default, so a plain install stays one binary with nothing to set up, and you can confine a deployment or a single worker's shell when you want a command bounded to its working tree and off the network.
+The [policy and safety](/guides/policy-and-safety/) guide is the whole trust model in depth: capability classes, per-tool rules, taint, the sandbox, and what tomo will never do by default.
 
 ## Model-agnostic
 
