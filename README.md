@@ -8,7 +8,7 @@
 
 **tomo** (友, "companion") is a personal AI agent that lives on your own machine, one static Go binary, no server you don't run yourself. It sits between your chat apps and a language model: you text it on Telegram, Discord, Slack, or iMessage, or open the local web chat, and it remembers you across conversations and acts on real tools, running commands, reading and writing files, fetching pages, saving its own memory, scheduling work for later.
 
-[Install](#install) • [Quick start](#quick-start) • [Models](#models) • [What it does](#what-it-does) • [Docs](https://tomo.tamnd.com/) • [Safety](https://tomo.tamnd.com/guides/policy-and-safety/)
+[Install](#install) • [Quick start](#quick-start) • [Models](#models) • [What it does](#what-it-does) • [The Hi! baseline](#the-hi-baseline) • [Docs](https://tomo.tamnd.com/) • [Safety](https://tomo.tamnd.com/guides/policy-and-safety/)
 
 ![tomo showing its command surface, then writing a starter config with onboard and starting the daemon with the local web chat](docs/static/demo.gif)
 
@@ -66,6 +66,24 @@ A model is named `provider/model`, so the `local` provider above serves models l
 - **Runs many agents when one isn't enough.** Named workers with their own persona, model, policy, and memory, routed by `@name` or by channel, and one worker can hand a task off to another.
 - **Speaks and listens.** Optional local voice: whisper transcribes voice notes in, piper speaks replies back, all on your machine.
 - **Talks to other tools over MCP.** Attach MCP servers to extend its toolset, or serve tomo's own tools to Claude Code and other MCP clients.
+
+## The Hi! baseline
+
+[tomo-labs](https://github.com/tamnd/tomo-labs) runs tomo and six other coding agents through the same tasks on the same free model, through a proxy that forces deterministic decoding and records every request verbatim, so the only thing that differs between rows is the tool. Its simplest scenario, `00-hello`, is just the prompt `Hi!`, no task beyond completing the round trip, which isolates the fixed cost every tool pays before it does any real work:
+
+| tool | tokens | cached | ttfb | rss | wall | requests |
+| --- | --- | --- | --- | --- | --- | --- |
+| tomo | 1,153 | 1,024 | 761ms | 12MB | 2s | 2 |
+| gemini-cli | 8,001 | 2,048 | 1090ms | 363MB | 5s | 3 |
+| codex | 7,593 | 7,424 | 852ms | 92MB | 2s | 2 |
+| opencode | 7,260 | 7,168 | 779ms | 643MB | 3s | 3 |
+| openclaw | 16,770 | 7,552 | 1129ms | 362MB | 32s | 2 |
+| claude-code | 19,183 | 19,072 | 1105ms | 287MB | 2s | 3 |
+| hermes | 13,611 | — | 981ms | 122MB | 19s | 26 |
+
+tomo's floor is roughly a tenth of the next tool's, because its system prompt and tool schema are smaller and it doesn't re-read its own context to say hello. hermes's 26 requests on a one-line greeting is an outlier worth flagging rather than hiding: its scenario runner retries in a loop that a plain acknowledgment doesn't satisfy on the first try, which also explains openclaw's 32-second wall time against everyone else's low single digits.
+
+See the full scenario suite, install footprints, and pass rates for all seven tools at [tamnd/tomo-labs](https://github.com/tamnd/tomo-labs#results).
 
 ## How it's built
 
