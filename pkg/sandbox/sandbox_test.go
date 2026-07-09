@@ -75,7 +75,7 @@ func TestConfinedRunsAndConfines(t *testing.T) {
 	target := filepath.Join(home, ".tomo-sandbox-should-not-exist")
 	_, _ = box.Run(context.Background(), []string{"sh", "-c", "printf x > " + target})
 	if _, statErr := os.Stat(target); statErr == nil {
-		os.Remove(target)
+		_ = os.Remove(target)
 		t.Errorf("sandbox allowed a write to %s outside the working tree", target)
 	}
 }
