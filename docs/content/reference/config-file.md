@@ -298,6 +298,7 @@ See the [workers guide](/guides/workers/).
 | `model` | Provider/model override. Empty means the default. |
 | `policy` | Its own gate, in the same shape as the top-level `policy`, merged over the top-level one. |
 | `sandbox` | Exec sandbox for this worker, overriding the top-level `sandbox`. Empty means the default. |
+| `workspace` | Working directory for this worker's file and shell tools, overriding the top-level `workspace`. Empty means the default. |
 | `channels` | List of `channel:chat` keys whose messages route to it. |
 
 ## data_dir
@@ -308,6 +309,18 @@ data_dir: ~/.tomo
 
 Where tomo keeps everything: the config, the `tomo.db` ledger, the `audit.log`, and the `memory`, `skills`, and `skill-drafts` dirs.
 Defaults to `~/.tomo`.
+
+## workspace
+
+```yaml
+workspace: ~/tomo
+```
+
+The working directory the `read_file`, `write_file`, and `shell` tools are rooted at.
+A relative path the agent writes lands here, the shell runs here, and the agent is told where it is in its system prompt so it stops guessing a home directory.
+An absolute path the agent gives is still honored as-is, and a `~` prefix still expands to the home directory.
+Defaults to the directory tomo was launched from, which keeps the old behavior where a relative path resolved against the process working directory.
+A worker may set its own `workspace` to override this top-level value.
 
 ## Complete example
 
@@ -344,6 +357,9 @@ policy:
 
 # Confine an approved shell command at the OS level. none by default.
 sandbox: none
+
+# The directory the file and shell tools work in. Defaults to where tomo starts.
+workspace: ~/tomo
 
 # The web chat is always on; these start only when configured.
 channels:
@@ -400,6 +416,7 @@ workers:
     policy:
       write: deny        # this one only reads and reports
     sandbox: standard    # confine this worker's shell; others stay unconfined
+    workspace: ~/research # this worker's files land here, not the shared dir
     channels: ["slack:C0RESEARCH"]
 
 data_dir: ~/.tomo

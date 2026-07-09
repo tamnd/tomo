@@ -28,9 +28,12 @@ type Sandbox interface {
 	Run(ctx context.Context, argv []string) (string, error)
 }
 
-// New builds the sandbox for a mode. An empty mode or "none" is the
-// unconfined default. The confined modes name a filesystem-and-network
-// posture, from tightest to loosest:
+// New builds the sandbox for a mode, rooted at dir: the working directory a
+// shell command runs in and, for the confined modes, the working tree the
+// filesystem policy is scoped to. An empty dir falls back to the directory tomo
+// was launched from. An empty mode or "none" is the unconfined default. The
+// confined modes name a filesystem-and-network posture, from tightest to
+// loosest:
 //
 //	restricted  read the working tree and system dirs, write nothing, no net
 //	standard    read all but secrets, write the working tree and tmp, no net
@@ -41,23 +44,28 @@ type Sandbox interface {
 // floor for a shell an agent drives. An unknown mode is an error that lists
 // the valid ones, so a typo fails closed at startup rather than silently
 // running unconfined.
-func New(mode string) (Sandbox, error) {
+func New(mode, dir string) (Sandbox, error) {
+	dir = workdir(dir)
 	switch mode {
 	case "", "none":
-		return none{}, nil
+		return none{dir: dir}, nil
 	case "hako":
-		return confined("standard")
+		return confined("standard", dir)
 	case "restricted", "standard", "net", "dev":
-		return confined(mode)
+		return confined(mode, dir)
 	default:
 		return nil, fmt.Errorf("sandbox %q: want none, restricted, standard, net, or dev", mode)
 	}
 }
 
-// workdir anchors the confined filesystem policy: reads and writes are scoped
-// relative to it. It is the directory the agent was launched from, which is the
-// natural project boundary for a shell the agent runs.
-func workdir() string {
+// workdir resolves the directory a sandbox runs in. A caller that passes an
+// explicit dir gets it back; an empty dir falls back to the directory the agent
+// was launched from, which is the natural project boundary for a shell the
+// agent runs.
+func workdir(dir string) string {
+	if dir != "" {
+		return dir
+	}
 	if wd, err := os.Getwd(); err == nil {
 		return wd
 	}

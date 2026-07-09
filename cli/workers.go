@@ -84,6 +84,7 @@ func buildWorker(cfg *config.Config, name string, wc config.Worker, defaultModel
 			memoryDir: memDir,
 			skillsDir: skillsDir,
 			sandbox:   orDefault(wc.Sandbox, cfg.Sandbox),
+			workspace: orDefault(wc.Workspace, cfg.Workspace),
 		}, nil, mcpTools...)
 		return a, err
 	}

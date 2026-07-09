@@ -11,17 +11,17 @@ import (
 
 func TestNewModes(t *testing.T) {
 	for _, mode := range []string{"", "none", "hako", "restricted", "standard", "net", "dev"} {
-		if _, err := New(mode); err != nil {
+		if _, err := New(mode, ""); err != nil {
 			t.Errorf("New(%q): %v", mode, err)
 		}
 	}
-	if _, err := New("bogus"); err == nil {
+	if _, err := New("bogus", ""); err == nil {
 		t.Error("New(bogus): want error, got nil")
 	}
 }
 
 func TestNoneRuns(t *testing.T) {
-	box, err := New("none")
+	box, err := New("none", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestNoneRuns(t *testing.T) {
 }
 
 func TestNoneReportsExitCode(t *testing.T) {
-	box, _ := New("none")
+	box, _ := New("none", "")
 	_, err := box.Run(context.Background(), []string{"sh", "-c", "exit 3"})
 	if err == nil {
 		t.Fatal("want error for non-zero exit, got nil")
@@ -53,7 +53,7 @@ func TestConfinedRunsAndConfines(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skipf("sandbox not supported on %s", runtime.GOOS)
 	}
-	box, err := New("standard")
+	box, err := New("standard", "")
 	if err != nil {
 		t.Fatalf("New(standard): %v", err)
 	}
