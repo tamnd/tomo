@@ -321,3 +321,15 @@ See the [MCP guide](/guides/mcp/).
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `-m`, `--model` | config `default_model` | Provider/model for the chat tool. |
+
+## version
+
+```
+tomo version
+```
+
+Prints the version, commit, build date, Go toolchain, and target platform, the same block a Go tool shows.
+A release binary carries these stamped in by goreleaser.
+A binary from `go install github.com/tamnd/tomo/cmd/tomo@<commit>` has no stamp, so this falls back to the build info the Go toolchain embeds in every binary and recovers the commit and date from the module's pseudo-version.
+`tomo --version` prints the same information as one line.
+Takes no positional arguments and no flags.
