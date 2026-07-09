@@ -169,9 +169,24 @@ func newOnboardCmd() *cobra.Command {
 			if err := os.WriteFile(path, []byte(configTemplate), 0o600); err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "wrote %s\n\nnext:\n", path)
-			fmt.Fprintln(out, "  1. export ANTHROPIC_API_KEY=... (or point a provider at a local server)")
-			fmt.Fprintln(out, "  2. tomo chat")
+			fmt.Fprintf(out, "wrote %s\n\n", path)
+
+			// End at the next real action, not a config file to read. If the
+			// default provider already has a key in the environment, the user is
+			// one command from a working turn; if not, hand them the exact line.
+			if cfg, err := config.Load(path); err == nil {
+				if _, _, pc, rerr := cfg.Resolve(""); rerr == nil && pc.APIKey != "" {
+					fmt.Fprintln(out, "you're set. try:")
+					fmt.Fprintln(out, "  tomo doctor   # confirm everything is ready")
+					fmt.Fprintln(out, "  tomo chat     # then ask: what can you do?")
+					return nil
+				}
+			}
+			fmt.Fprintln(out, "one step left, set the provider key:")
+			fmt.Fprintln(out, "  export ANTHROPIC_API_KEY=...   (or point a provider at a local server)")
+			fmt.Fprintln(out, "then:")
+			fmt.Fprintln(out, "  tomo doctor   # confirm everything is ready")
+			fmt.Fprintln(out, "  tomo chat     # then ask: what can you do?")
 			return nil
 		},
 	}

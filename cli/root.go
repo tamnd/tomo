@@ -42,6 +42,8 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newChatCmd())
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newOnboardCmd())
+	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newWatchCmd())
 	root.AddCommand(newSessionsCmd())
 	root.AddCommand(newCronCmd())
 	root.AddCommand(newSkillsCmd())
