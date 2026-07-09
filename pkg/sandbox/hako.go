@@ -15,8 +15,8 @@ import (
 // enforcement is the kernel's, so a command that talks its way past the model
 // still cannot read outside the working tree or reach the network it was not
 // granted. The mode names one of the built-in postures.
-func confined(mode string) (Sandbox, error) {
-	wd := workdir()
+func confined(mode, dir string) (Sandbox, error) {
+	wd := workdir(dir)
 	p, ok := hakopolicy.Preset(mode, wd)
 	if !ok {
 		return nil, fmt.Errorf("sandbox %q: no such preset", mode)

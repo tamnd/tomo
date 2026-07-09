@@ -2,6 +2,17 @@
 
 All notable changes to tomo are recorded here.
 
+## Unreleased
+
+### Added
+
+- A configurable `workspace`: the directory the `read_file`, `write_file`, and
+  `shell` tools are rooted at. A relative path the agent writes lands there, the
+  shell runs there, and the system prompt tells the agent where it is so it stops
+  guessing a home directory. Absolute paths and a `~` prefix still work as
+  before. Defaults to the directory tomo was launched from, so nothing changes
+  for an existing setup. Set it top-level or per worker.
+
 ## v0.2.1
 
 Makes tomo easier to audit, safer when it runs a shell, and easier to extend

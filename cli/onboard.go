@@ -53,6 +53,12 @@ policy:
 # plus outbound network), dev (net plus build caches). Set per worker too.
 # sandbox: standard
 
+# The working directory the file and shell tools are rooted at. A relative path
+# the agent writes lands here, the shell runs here, and the agent is told where
+# it is so it stops guessing a home dir. Defaults to the directory tomo was
+# launched from. Set per worker too.
+# workspace: ~/tomo
+
 # Channels are the front doors 'tomo serve' opens. The web chat is always on;
 # the rest start only when configured. Each names the conversations it will
 # serve, so a leaked token or a stray invite does not hand anyone an agent.
