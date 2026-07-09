@@ -292,7 +292,7 @@ func ChatToGemini(chat []byte) map[string]any {
 		} `json:"choices"`
 		Usage json.RawMessage `json:"usage"`
 	}
-	json.Unmarshal(chat, &c)
+	_ = json.Unmarshal(chat, &c)
 	parts := []any{}
 	finish := "STOP"
 	if len(c.Choices) > 0 {
@@ -340,7 +340,7 @@ func geminiUsage(chatUsage json.RawMessage) map[string]any {
 		} `json:"prompt_tokens_details"`
 	}
 	if len(chatUsage) > 0 {
-		json.Unmarshal(chatUsage, &u)
+		_ = json.Unmarshal(chatUsage, &u)
 	}
 	cached := 0
 	if u.PromptTokensDetails != nil {

@@ -225,7 +225,7 @@ func ChatToMessages(chat []byte, seq int) map[string]any {
 		} `json:"choices"`
 		Usage json.RawMessage `json:"usage"`
 	}
-	json.Unmarshal(chat, &c)
+	_ = json.Unmarshal(chat, &c)
 	content := []any{}
 	stop := "end_turn"
 	if len(c.Choices) > 0 {
@@ -270,7 +270,7 @@ func anthTokens(chatUsage json.RawMessage) (in, out int) {
 		CompletionTokens int `json:"completion_tokens"`
 	}
 	if len(chatUsage) > 0 {
-		json.Unmarshal(chatUsage, &u)
+		_ = json.Unmarshal(chatUsage, &u)
 	}
 	return u.PromptTokens, u.CompletionTokens
 }
