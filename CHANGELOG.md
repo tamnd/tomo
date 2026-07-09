@@ -4,6 +4,8 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+## v0.2.2
+
 ### Added
 
 - A configurable `workspace`: the directory the `read_file`, `write_file`, and
@@ -12,6 +14,41 @@ All notable changes to tomo are recorded here.
   guessing a home directory. Absolute paths and a `~` prefix still work as
   before. Defaults to the directory tomo was launched from, so nothing changes
   for an existing setup. Set it top-level or per worker.
+- `tomo -p "<prompt>"`, a root `-p`/`--prompt` flag that runs one prompt
+  non-interactively and exits, for scripts and pipelines. It reuses the chat
+  build helpers, so the policy gate, memory, and toolset are identical to the
+  REPL, and it takes the whole prompt as one turn rather than fragmenting a
+  multi-line prompt across several.
+- `tomo doctor`, a preflight command that checks the provider key, the data
+  dir, and any configured channels, and exits non-zero on the first failure so
+  a broken setup is named instead of guessed at.
+- `tomo watch`, which tails the audit log and prints one line per gate
+  decision, the read side of the policy gate.
+- `tomo version`, which prints the version, commit, build date, Go toolchain,
+  and target platform. A release binary still carries these from goreleaser's
+  stamp; a binary from `go install` or `go build` now falls back to the build
+  info the Go toolchain embeds in every binary, recovering the commit and date
+  from the module's pseudo-version when no VCS setting is present. `tomo
+  --version` folds the same detail into one line instead of a bare "dev".
+- `pkg/wire`, stdlib-only translators between chat-completions and the
+  OpenAI Responses, Anthropic Messages, and Google Gemini wires: request
+  bytes in, chat completions bytes out, and the reply translated back,
+  streaming included. Lets a chat-only backend sit behind agents that speak a
+  different wire, with no knowledge of HTTP or the upstream connection.
+
+### Fixed
+
+- A model that ends a tool call with truncated, unparseable JSON arguments no
+  longer wedges the run. The bad block is coerced to an empty object when the
+  streamed call is assembled and again when history is flattened onto the
+  wire, so the tool returns a plain error and the model can retry instead of
+  every following turn repeating the same 400.
+- The audit log's scrubber now redacts secret-shaped values in a tool's input
+  before writing the entry, so a key a tool carried never lands in a log a
+  person or `tomo watch` reads.
+- Listen-address loopback classification now parses and range-checks the host
+  instead of string-matching it, closing a gap where a trailing-dot hostname
+  slipped past a comparable guard.
 
 ### Removed
 
