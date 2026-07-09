@@ -22,7 +22,7 @@ var (
 // Execute builds the root command and runs it through fang. main passes the
 // signal-aware context so Ctrl-C lands as a context cancel everywhere.
 func Execute(ctx context.Context) int {
-	if err := fang.Execute(ctx, newRoot(), fang.WithVersion(Version)); err != nil {
+	if err := fang.Execute(ctx, newRoot(), fang.WithVersion(shortVersion())); err != nil {
 		return 1
 	}
 	return 0
@@ -61,6 +61,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newSkillsCmd())
 	root.AddCommand(newChannelCmd())
 	root.AddCommand(newMCPCmd())
+	root.AddCommand(newVersionCmd())
 	return root
 }
 
