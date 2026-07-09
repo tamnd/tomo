@@ -15,7 +15,7 @@ import (
 
 func find(t *testing.T, name string) tool.Tool {
 	t.Helper()
-	for _, tl := range All() {
+	for _, tl := range All(nil) {
 		if tl.Name == name {
 			return tl
 		}
@@ -32,7 +32,7 @@ func TestClassesAreDeclared(t *testing.T) {
 		"fetch":      tool.ClassNet,
 		"time":       tool.ClassRead,
 	}
-	for _, tl := range All() {
+	for _, tl := range All(nil) {
 		if want[tl.Name] != tl.Class {
 			t.Errorf("%s class = %s, want %s", tl.Name, tl.Class, want[tl.Name])
 		}

@@ -74,7 +74,7 @@ func newMCPCmd() *cobra.Command {
 // tomoTools is the set exposed over MCP: a chat tool backed by a full agent,
 // the memory tools, and a scheduler bound to an mcp session.
 func tomoTools(cfg *config.Config, model string, guard agent.Gate, st *store.Store) ([]tool.Tool, error) {
-	a, _, err := buildAgent(cfg, agentBuild{model: model}, guard)
+	a, _, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox}, guard)
 	if err != nil {
 		return nil, err
 	}

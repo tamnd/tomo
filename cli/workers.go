@@ -23,7 +23,7 @@ import (
 func buildWorkforce(cfg *config.Config, model string, mcpTools []tool.Tool) (channel.Workforce, error) {
 	engine := buildEngine(cfg.Policy, mcpTools)
 	newAgent := func() (*agent.Agent, error) {
-		a, _, err := buildAgent(cfg, agentBuild{model: model}, nil, mcpTools...)
+		a, _, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox}, nil, mcpTools...)
 		return a, err
 	}
 	cur, err := buildCurator(cfg, curatorBuild{model: model})
@@ -83,6 +83,7 @@ func buildWorker(cfg *config.Config, name string, wc config.Worker, defaultModel
 			model:     model,
 			memoryDir: memDir,
 			skillsDir: skillsDir,
+			sandbox:   orDefault(wc.Sandbox, cfg.Sandbox),
 		}, nil, mcpTools...)
 		return a, err
 	}
