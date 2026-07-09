@@ -58,7 +58,7 @@ func watchLog(cmd *cobra.Command, path string, follow bool) error {
 			return nil
 		}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	reader := bufio.NewReader(f)
 	for {
