@@ -83,6 +83,36 @@ policy:
     files_read: allow     # an MCP filesystem read you have vetted
 ```
 
+## The sandbox: bounding a command once it runs
+
+The gate decides whether a command may run.
+The sandbox decides how much it can touch once it does.
+They are two layers: the gate is about approval, the sandbox is about blast radius.
+
+By default the sandbox is off (`none`), and an approved shell command runs with tomo's own privileges.
+That keeps a plain install to one binary with nothing to configure.
+When you want a shell in the agent's hands without handing over the whole machine, opt a deployment or a single worker into a confined mode, and the kernel, not the model, enforces the walls:
+
+```yaml
+sandbox: standard
+```
+
+The modes, tightest first:
+
+| Mode | Filesystem | Network |
+| --- | --- | --- |
+| `restricted` | read the working tree, write nothing | none |
+| `standard` | read all but secrets, write the working tree and tmp | none |
+| `net` | same as standard | outbound allowed |
+| `dev` | standard plus build caches | outbound allowed |
+
+Confinement is OS-enforced: Seatbelt on macOS, namespaces on Linux, with no container engine to install and no change to the single-binary, CGO-free build.
+A worker can set its own `sandbox` to override the top-level one, so the worker wired to a work repo runs `standard` while a chatty channel stays cheap.
+
+This sits under the gate, not around it.
+The gate still decides allow, ask, or deny, and taint still escalates writes and exec after untrusted content is read.
+The sandbox is what runs the command after the gate says go, so a command that gets approved but then tries to reach outside its working tree or the network is stopped by the kernel anyway.
+
 ## When no one is watching
 
 A [scheduled job](/guides/scheduling/) or a heartbeat runs with no human present to approve anything.

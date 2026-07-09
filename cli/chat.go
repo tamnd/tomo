@@ -18,6 +18,7 @@ import (
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
+	"github.com/tamnd/tomo/pkg/sandbox"
 	"github.com/tamnd/tomo/pkg/skill"
 	"github.com/tamnd/tomo/pkg/store"
 	"github.com/tamnd/tomo/pkg/tool"
@@ -43,7 +44,7 @@ func newChatCmd() *cobra.Command {
 				return err
 			}
 			defer closeAudit()
-			a, label, err := buildAgent(cfg, agentBuild{model: model}, guard)
+			a, label, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox}, guard)
 			if err != nil {
 				return err
 			}
@@ -83,6 +84,7 @@ type agentBuild struct {
 	model     string // provider/model spec, empty means the config default
 	memoryDir string // empty means <data>/memory
 	skillsDir string // empty means <data>/skills
+	sandbox   string // exec sandbox mode, empty means none (unconfined)
 }
 
 // buildAgent assembles the provider, memory, and toolset shared by every
@@ -108,7 +110,11 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 	if err != nil {
 		return nil, "", err
 	}
-	reg := tool.NewRegistry(builtin.All()...)
+	box, err := sandbox.New(b.sandbox)
+	if err != nil {
+		return nil, "", err
+	}
+	reg := tool.NewRegistry(builtin.All(box)...)
 	for _, t := range mem.Tools() {
 		reg.Add(t)
 	}

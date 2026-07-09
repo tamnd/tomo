@@ -43,6 +43,16 @@ policy:
     # shell: deny
     # write_file: allow
 
+# The gate decides whether a command may run; the sandbox decides how much it
+# can touch once it does. Off by default (none), so a plain install runs shell
+# commands with tomo's own privileges. Opt a deployment into a confined mode to
+# hand a shell to the agent without handing it your whole machine: the kernel
+# enforces the filesystem and network walls, not the model. Modes, tightest
+# first: restricted (read the working tree, write nothing, no net), standard
+# (read all but secrets, write the working tree and tmp, no net), net (standard
+# plus outbound network), dev (net plus build caches). Set per worker too.
+# sandbox: standard
+
 # Channels are the front doors 'tomo serve' opens. The web chat is always on;
 # the rest start only when configured. Each names the conversations it will
 # serve, so a leaked token or a stray invite does not hand anyone an agent.
@@ -63,7 +73,6 @@ channels:
   #   allow_channels: ["C0000000000"]
 
   # imessage:        # macOS only, needs Full Disk Access
-  #   enabled: true
   #   allow_handles: ["+15555550123"]
 
 # The heartbeat runs tomo on a cadence against a checklist, so it can pick up
@@ -126,6 +135,7 @@ channels:
 #     model: anthropic/claude-fable-5
 #     policy:
 #       write: deny        # this one only reads and reports
+#     sandbox: standard    # confine this worker's shell, others stay unconfined
 #     channels: ["slack:C0RESEARCH"]
 `
 

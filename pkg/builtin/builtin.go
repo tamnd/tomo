@@ -11,24 +11,33 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/tamnd/tomo/pkg/readable"
+	"github.com/tamnd/tomo/pkg/sandbox"
 	"github.com/tamnd/tomo/pkg/tool"
 )
 
-// All returns the full builtin set.
-func All() []tool.Tool {
-	return []tool.Tool{shellTool(), readFileTool(), writeFileTool(), fetchTool(), timeTool()}
+// All returns the full builtin set. The shell tool runs its command through the
+// given sandbox; a nil sandbox means unconfined, the same as passing the none
+// mode, so callers that do not care about confinement can pass nil.
+func All(exec sandbox.Sandbox) []tool.Tool {
+	return []tool.Tool{shellTool(exec), readFileTool(), writeFileTool(), fetchTool(), timeTool()}
 }
 
-func shellTool() tool.Tool {
+func shellTool(box sandbox.Sandbox) tool.Tool {
+	if box == nil {
+		box, _ = sandbox.New("none")
+	}
+	desc := "Run a shell command and return its combined output. Use for quick, local, reversible actions."
+	if box.Name() != "none" {
+		desc += " It runs inside a " + box.Name() + " sandbox: the filesystem and network are restricted, so a command may be refused access the kernel enforces."
+	}
 	return tool.Tool{
 		Name:        "shell",
-		Description: "Run a shell command and return its combined output. Use for quick, local, reversible actions.",
+		Description: desc,
 		Class:       tool.ClassExec,
 		Schema: json.RawMessage(`{
 			"type": "object",
@@ -54,17 +63,17 @@ func shellTool() tool.Tool {
 			}
 			cctx, cancel := context.WithTimeout(ctx, time.Duration(v.Timeout)*time.Second)
 			defer cancel()
-			out, err := exec.CommandContext(cctx, "sh", "-c", v.Command).CombinedOutput()
+			out, err := box.Run(cctx, []string{"sh", "-c", v.Command})
 			if cctx.Err() == context.DeadlineExceeded {
-				return string(out), fmt.Errorf("command timed out after %ds", v.Timeout)
+				return out, fmt.Errorf("command timed out after %ds", v.Timeout)
 			}
 			if err != nil {
-				return string(out), fmt.Errorf("%s: %w", trim(string(out), 500), err)
+				return out, fmt.Errorf("%s: %w", trim(out, 500), err)
 			}
 			if len(out) == 0 {
 				return "(no output)", nil
 			}
-			return string(out), nil
+			return out, nil
 		},
 	}
 }
