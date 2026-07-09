@@ -76,6 +76,32 @@ func newChatCmd() *cobra.Command {
 	return cmd
 }
 
+// runPrompt runs a single prompt non-interactively and exits, the headless
+// counterpart to the chat REPL. The whole prompt, newlines and all, lands as one
+// message, so a multi-line task is one turn rather than one turn per line. stdin
+// still feeds the approver, so a gate that escalates mid-run can be answered by
+// piping approvals in. This is what `tomo -p` drives.
+func runPrompt(cmd *cobra.Command, model, prompt string) error {
+	cfg, err := loadConfig(cmd)
+	if err != nil {
+		return err
+	}
+	tio := newTermIO(os.Stdin, cmd.OutOrStdout())
+	guard, closeAudit, err := buildGuard(cfg, tio)
+	if err != nil {
+		return err
+	}
+	defer closeAudit()
+	a, _, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
+	if err != nil {
+		return err
+	}
+	sink := &termSink{out: tio.out}
+	_, err = a.Turn(cmd.Context(), nil, provider.UserText(prompt), sink)
+	fmt.Fprintln(tio.out)
+	return err
+}
+
 // agentBuild is the per-worker input to buildAgent: which persona and model to
 // run under, and which memory and skills dirs to read. The zero value plus a
 // model spec builds the default worker against the top-level dirs.

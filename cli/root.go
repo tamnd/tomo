@@ -29,16 +29,28 @@ func Execute(ctx context.Context) int {
 }
 
 func newRoot() *cobra.Command {
+	var prompt, model string
 	root := &cobra.Command{
 		Use:   "tomo",
 		Short: "Personal AI agent in one binary",
 		Long: "tomo (友, \"companion\") puts a language model behind your chat apps.\n" +
 			"It remembers you across conversations, and it can act: run commands,\n" +
-			"fetch pages, save memories. Every action passes a policy gate first.",
+			"fetch pages, save memories. Every action passes a policy gate first.\n\n" +
+			"With -p it runs one prompt and exits, for scripts and pipelines:\n" +
+			"  tomo -p \"summarize CHANGES.md\"",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if prompt == "" {
+				return cmd.Help()
+			}
+			return runPrompt(cmd, model, prompt)
+		},
 	}
 	root.PersistentFlags().String("config", "", "config file (default ~/.tomo/config.yaml)")
+	root.Flags().StringVarP(&prompt, "prompt", "p", "", "run a single prompt non-interactively and exit")
+	root.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
 	root.AddCommand(newChatCmd())
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newOnboardCmd())
