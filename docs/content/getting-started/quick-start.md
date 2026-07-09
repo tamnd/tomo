@@ -31,15 +31,34 @@ tomo onboard
 ```
 wrote /home/you/.tomo/config.yaml
 
-next:
-  1. export ANTHROPIC_API_KEY=... (or point a provider at a local server)
-  2. tomo chat
+you're set. try:
+  tomo doctor   # confirm everything is ready
+  tomo chat     # then ask: what can you do?
 ```
 
+If you have not set the key yet, onboard prints the exact `export` line to run first instead.
 Open `~/.tomo/config.yaml` if you want to change the default model, adjust the policy, or wire up a channel.
 The defaults are ready to go as they are.
 
-## 3. Talk to it in the terminal
+## 3. Confirm it is ready
+
+`tomo doctor` checks the config, the provider key, the data dir, and any channels, printing a line per check:
+
+```bash
+tomo doctor
+```
+
+```
+✓ default provider: anthropic/claude-fable-5 ready
+✓ data dir: /home/you/.tomo writable
+✓ channels: [web (always on)]
+
+all good. next: tomo chat
+```
+
+If a check fails it names the fix and exits non-zero, and `tomo serve` runs the same checks before it starts, so nothing gets half-configured.
+
+## 4. Talk to it in the terminal
 
 `tomo chat` is a streaming REPL against the configured model:
 
@@ -69,7 +88,7 @@ tomo chat -s daily
 
 You can also override the model for a single run with `-m` (or `--model`), for example `tomo chat -m anthropic/claude-fable-5`.
 
-## 4. Open the web chat
+## 5. Open the web chat
 
 `tomo serve` runs tomo as a daemon.
 The web chat is always on, bound to loopback by default, and any channels you configured start alongside it:

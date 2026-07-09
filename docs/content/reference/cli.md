@@ -9,7 +9,7 @@ tomo [command] [flags]
 ```
 
 tomo is one binary with a small command tree.
-`tomo chat` talks to the model from the terminal, `tomo serve` runs the daemon behind your chat apps, `tomo onboard` writes a starter config, and the rest manage sessions, scheduled jobs, and skills.
+`tomo chat` talks to the model from the terminal, `tomo serve` runs the daemon behind your chat apps, `tomo onboard` writes a starter config, `tomo doctor` checks it is ready, `tomo watch` shows what the agent is doing, and the rest manage sessions, scheduled jobs, and skills.
 Run `tomo <command> --help` for the canonical, up-to-date flag list rendered from the binary itself.
 
 ## Global
@@ -69,7 +69,9 @@ Takes no positional arguments.
 | `--addr` | `127.0.0.1:8765` | Listen address for the web chat. Loopback by default, so it is not reachable off the machine. |
 | `-m`, `--model` | config `default_model` | Provider/model for the default worker. |
 
+Before it opens anything it runs the same checks as [`tomo doctor`](#doctor) and refuses to start if one fails, printing the named fix rather than half-starting and failing on the first turn.
 On start it prints the serving address, each active channel, any extra [workers](/guides/workers/), whether voice is wired in, and whether the [heartbeat](/guides/scheduling/) is running.
+If `--addr` is not a loopback address it prints a warning, because the web chat is then reachable from other hosts; the address is resolved and range-checked, so a trailing-dot or decimal spelling of loopback does not slip past it.
 It also runs the scheduler, so [cron jobs](/guides/scheduling/) fire and post their results while `serve` is up.
 
 Send `/session <name>` from any chat to bind that conversation to a shared, named session in the ledger; this is handled by the router, covered under [chat commands](#chat-commands-in-a-channel) below.
@@ -91,6 +93,33 @@ Sets up `~/.tomo` and writes a starter `config.yaml`.
 It creates the data dir plus the `memory` and `skills` subdirs, then writes the annotated config template if none exists yet.
 If a config is already there it says so and leaves it alone.
 Takes no positional arguments; it honors the global `--config` to choose where the file lands.
+After writing the file it ends at the next real action, not a wall of YAML: if the default provider's key is already in the environment it points you at `tomo doctor` and `tomo chat`; if not, it prints the exact `export` line to set first.
+
+## doctor
+
+```
+tomo doctor
+```
+
+Checks tomo's startup preconditions and prints one line per check with a named fix for anything wrong, then exits non-zero if any check failed.
+It confirms the config loads, the default provider resolves and has a key, the data dir is writable, and every configured channel has a driver.
+`tomo serve` runs the same checks on boot, so `doctor` tells you ahead of time what would stop it from starting.
+Takes no positional arguments; honors the global `--config`.
+
+## watch
+
+```
+tomo watch [flags]
+```
+
+A live, read-only view of the audit log: each tool call, its class, the gate's decision (`allow`, `ask`, `deny`), whether it ran, the session's taint state, and the reason.
+It is read-only by construction; no control action travels over it, so there is nothing for it to be tricked into doing.
+Credentials never reach the audit log in the first place, so nothing here has to be redacted after the fact.
+Takes no positional arguments.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `-f`, `--follow` | `true` | Keep watching for new entries. Pass `--follow=false` to print what is there and exit. |
 
 ## sessions
 
