@@ -13,6 +13,12 @@ All notable changes to tomo are recorded here.
   before. Defaults to the directory tomo was launched from, so nothing changes
   for an existing setup. Set it top-level or per worker.
 
+### Removed
+
+- The generated line-count table in `AUDITING.md` and the CI job that enforced a
+  budget on it. The doc still maps the security-critical packages; the enforced
+  count was churn without a payoff. `scripts/audit-loc.sh` is gone.
+
 ## v0.2.1
 
 Makes tomo easier to audit, safer when it runs a shell, and easier to extend

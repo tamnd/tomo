@@ -14,20 +14,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build and test on Linux and macOS with the race detector on. gofmt and vet
-  # run here too so a formatting slip fails fast on both platforms.
+  # One Linux job runs the whole fast gate in a single runner slot: format, vet,
+  # build, the race test, tidy, and the vulnerability scan. Folding them keeps
+  # the toolchain and module cache warm across steps, and it asks the scheduler
+  # for one runner instead of five, so a busy account does not leave the run
+  # queued for ten minutes before anything starts.
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
-          check-latest: true
           cache: true
       - name: gofmt
         run: |
@@ -42,13 +40,19 @@ jobs:
       - name: build
         run: go build ./...
       - name: test
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
-      - name: coverage summary
-        if: matrix.os == 'ubuntu-latest'
-        run: go tool cover -func=coverage.out | tail -1
+        run: go test -race -count=1 ./...
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   # golangci-lint bundles staticcheck, govet, ineffassign, errcheck, unused and
-  # more, so it is the main quality gate.
+  # more, so it is the main quality gate. It ships its own action with its own
+  # cache, so it stays a separate job.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -56,49 +60,25 @@ jobs:
       - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
-          check-latest: true
           cache: true
       - uses: golangci/golangci-lint-action@v9.2.1
         with:
           version: latest
 
-  # Scan the module and its dependencies for known vulnerabilities.
-  govulncheck:
-    runs-on: ubuntu-latest
+  # macOS has real code behind it (the iMessage channel, the exec sandbox), but
+  # macOS runners are scarce and slow to schedule, so a PR should not wait on
+  # one. Cover the platform on the way into main instead, where the extra minutes
+  # do not sit in front of a reviewer.
+  test-macos:
+    if: github.event_name == 'push'
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
-          check-latest: true
           cache: true
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
-
-  # Keep the audit surface honest: the LOC table in AUDITING.md must be current
-  # and the security-critical total must stay under budget. A PR that grows the
-  # surface has to regenerate the table or raise the budget on purpose.
-  audit-surface:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - name: audit surface is current and within budget
-        run: ./scripts/audit-loc.sh --check
-
-  # Confirm go.mod and go.sum are tidy: a PR that adds an import without running
-  # go mod tidy fails here instead of breaking a later release.
-  tidy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
-        with:
-          go-version-file: go.mod
-          check-latest: true
-          cache: true
-      - name: go mod tidy is clean
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+      - name: build
+        run: go build ./...
+      - name: test
+        run: go test -race -count=1 ./...
