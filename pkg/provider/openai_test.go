@@ -110,6 +110,67 @@ func TestOpenAIStream(t *testing.T) {
 	}
 }
 
+// truncatedToolCallFixture ends a tool call (finish_reason "tool_calls") with
+// arguments that were cut off mid-string, which a weak model does now and then.
+const truncatedToolCallFixture = `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_9","function":{"name":"write_file","arguments":"{\"path\": \"summary.txt\", \"content\": \"total"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4}}
+
+data: [DONE]
+`
+
+// A truncated tool call must not land in history as invalid JSON. It gets
+// coerced to an empty object so the tool errors and the model can retry,
+// instead of the arguments being replayed and rejected with a 400 forever.
+func TestOpenAIStreamTruncatedToolCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, truncatedToolCallFixture)
+	}))
+	defer srv.Close()
+
+	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+	resp, err := p.Stream(context.Background(), Request{
+		Model:    "weak",
+		Messages: []Message{UserText("summarize")},
+		Tools:    []Tool{{Name: "write_file", Schema: json.RawMessage(`{"type":"object"}`)}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Blocks) != 1 || resp.Blocks[0].Type != BlockToolUse {
+		t.Fatalf("blocks = %+v", resp.Blocks)
+	}
+	if got := string(resp.Blocks[0].Input); got != "{}" {
+		t.Errorf("input = %q, want %q", got, "{}")
+	}
+	if !json.Valid(resp.Blocks[0].Input) {
+		t.Errorf("input is not valid JSON: %q", resp.Blocks[0].Input)
+	}
+}
+
+// Even if an invalid tool-call block is already in history (an older session,
+// say), it must never be replayed to the provider verbatim.
+func TestOaMessagesInvalidToolArgsGuard(t *testing.T) {
+	msgs, err := oaMessages(Request{Messages: []Message{{
+		Role: RoleAssistant,
+		Blocks: []Block{
+			{Type: BlockToolUse, ID: "call_1", Name: "write_file", Input: json.RawMessage(`{"path": "x", "content": "tot`)},
+		},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || len(msgs[0].ToolCalls) != 1 {
+		t.Fatalf("messages = %#v", msgs)
+	}
+	if got := msgs[0].ToolCalls[0].Function.Arguments; got != "{}" {
+		t.Errorf("replayed arguments = %q, want %q", got, "{}")
+	}
+}
+
 func TestOpenAIUserImage(t *testing.T) {
 	msgs, err := oaMessages(Request{Messages: []Message{{
 		Role: RoleUser,

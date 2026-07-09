@@ -74,7 +74,11 @@ func oaMessages(req Request) ([]oaMessage, error) {
 					tc := oaToolCall{ID: b.ID, Type: "function"}
 					tc.Function.Name = b.Name
 					tc.Function.Arguments = string(b.Input)
-					if tc.Function.Arguments == "" {
+					// A model can stream tool-call arguments that are empty or
+					// not valid JSON (a truncated object, say). Replaying that
+					// verbatim makes the provider reject every later request
+					// with a 400, so never put it back on the wire.
+					if tc.Function.Arguments == "" || !json.Valid(b.Input) {
 						tc.Function.Arguments = "{}"
 					}
 					am.ToolCalls = append(am.ToolCalls, tc)
@@ -267,7 +271,11 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 	for _, i := range idxs {
 		c := calls[i]
 		args := strings.TrimSpace(c.args.String())
-		if args == "" {
+		// Keep only valid JSON in history. A model sometimes ends a tool call
+		// (finish_reason "tool_calls") with truncated arguments; storing that
+		// would poison every later request. Fall back to an empty object so
+		// the tool reports a plain error and the model can try again.
+		if args == "" || !json.Valid([]byte(args)) {
 			args = "{}"
 		}
 		out.Blocks = append(out.Blocks, Block{Type: BlockToolUse, ID: c.id, Name: c.name, Input: json.RawMessage(args)})
