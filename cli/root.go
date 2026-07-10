@@ -60,6 +60,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newCronCmd())
 	root.AddCommand(newSkillsCmd())
 	root.AddCommand(newChannelCmd())
+	root.AddCommand(newToolsCmd())
 	root.AddCommand(newMCPCmd())
 	root.AddCommand(newVersionCmd())
 	return root

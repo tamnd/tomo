@@ -19,6 +19,7 @@ func newDoctorCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
+			th := themeFor(out)
 			path, err := cmd.Flags().GetString("config")
 			if err != nil {
 				return err
@@ -26,17 +27,21 @@ func newDoctorCmd() *cobra.Command {
 			cfg, err := config.Load(path)
 			if err != nil {
 				// A parse or missing-file error already names its fix.
-				fmt.Fprintf(out, "%s config: %v\n", mark(false), err)
+				fmt.Fprintf(out, "%s %s  %s\n", th.mark(false), th.name("config"), th.muted(err.Error()))
 				return errBadConfig
 			}
 			results := doctor.Check(cfg)
+			nameW := 0
 			for _, r := range results {
-				fmt.Fprintf(out, "%s %s: %s\n", mark(r.OK), r.Name, r.Detail)
+				nameW = max(nameW, len(r.Name))
+			}
+			for _, r := range results {
+				fmt.Fprintf(out, "%s %s  %s\n", th.mark(r.OK), padRight(th.name(r.Name), nameW), th.muted(r.Detail))
 			}
 			if !doctor.OK(results) {
 				return errCheckFailed
 			}
-			fmt.Fprintln(out, "\nall good. next: tomo chat")
+			fmt.Fprintf(out, "\n%s\n", th.count("all good · next: tomo chat"))
 			return nil
 		},
 	}
