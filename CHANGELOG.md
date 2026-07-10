@@ -4,6 +4,41 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+## v0.2.3
+
+Makes a multi-step job cheap: tomo plans it in context instead of paying to
+rebuild state in a fresh context per step.
+
+### Added
+
+- A `plan` builtin tool. It is a scratchpad the model calls to write a short
+  checklist and update each step's status as it works, all inside one turn. It
+  has no side effects, so it runs without a gate prompt, and it rejects an empty
+  plan or more than one step in progress. The system prompt tells the model to
+  reach for it when a task has three or more distinct steps, then do the steps
+  in the same turn.
+
+### Changed
+
+- `tomo -p` runs a multi-step job in one turn now. The model plans it in context
+  with the `plan` tool rather than escalating to the step-per-fresh-context
+  orchestrator, which keeps the whole job in one growing conversation. On a
+  storefront benchmark this cut a job from forty model round-trips and 94k
+  tokens to eight round-trips and 24k tokens, still planning and still passing.
+  The explicit `tomo plan run` command still drives the orchestrator for callers
+  who want steps run as isolated workers.
+- The system prompt moved into `pkg/agent/prompts/system.md`, an editable
+  Markdown template embedded at build time and rendered with the run's
+  workspace, persona, date, and memory and skills indexes, so the prose is
+  easier to change than string concatenation was.
+
+### Fixed
+
+- A Gemini-backed run no longer crashes on a text-only turn or a non-object tool
+  argument. Function-call arguments are kept a JSON object, wrapping a bare value
+  as `{"value": ...}`, and a candidate's parts are kept non-empty with an empty
+  text part when a turn would otherwise send none. The other wires are untouched.
+
 ## v0.2.2
 
 ### Added

@@ -9,7 +9,7 @@ tomo [command] [flags]
 ```
 
 tomo is one binary with a small command tree.
-`tomo chat` talks to the model from the terminal, `tomo serve` runs the daemon behind your chat apps, `tomo onboard` writes a starter config, `tomo doctor` checks it is ready, `tomo watch` shows what the agent is doing, and the rest manage sessions, scheduled jobs, and skills.
+`tomo chat` talks to the model from the terminal, `tomo serve` runs the daemon behind your chat apps, `tomo onboard` writes a starter config, `tomo doctor` checks it is ready, `tomo watch` shows what the agent is doing, and the rest manage sessions, plans, scheduled jobs, and skills.
 Run `tomo <command> --help` for the canonical, up-to-date flag list rendered from the binary itself.
 
 ## Global
@@ -25,10 +25,16 @@ The root command does nothing on its own; it prints help and holds the flags eve
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--config` | `~/.tomo/config.yaml` | Config file to read. This is a persistent flag, so it works on every subcommand. |
+| `-p`, `--prompt` | | Run one prompt non-interactively and exit. |
 | `--version` | | Print the build version and exit. |
 
 Every command that touches state reads the config named by `--config`, or the default location when the flag is empty.
 A missing config is an error that names the fix: run `tomo onboard`.
+
+`tomo -p "<prompt>"` runs a single prompt against the same build as [`chat`](#chat), then exits, for scripts and pipelines.
+The whole prompt is one turn, newlines and all, so a multi-line prompt is not fragmented across turns.
+A job that needs more than one step is planned in that same turn: the model calls the `plan` tool to lay out the steps and works through them without leaving the turn, which is cheaper than running a step per fresh context.
+For a job you want run as isolated steps with their own budgets, use [`plan run`](#plan-run) instead.
 
 ## chat
 
@@ -82,6 +88,62 @@ Inside a served conversation (any channel, including the web chat) the router an
 
 - `/session` on its own reports the current session key for this chat.
 - `/session <name>` links this chat to the named session. Bind two channels to the same name to carry one conversation between them.
+
+## plan
+
+```
+tomo plan <subcommand>
+```
+
+A plan is tomo working a job that is more than one turn: research a few libraries and compare them, clean a directory and run the tests.
+`plan run` turns the job into a small graph of steps, runs the independent ones at once through the same [gate](/guides/policy-and-safety/), checks each against a grounded postcondition, and records the run in the ledger so you can look back at it.
+
+Most jobs do not need this.
+A one-shot [`tomo -p "<job>"`](#global) plans in context: the model calls the `plan` tool to lay out the steps and works through them in one turn.
+Reach for `tomo plan run` when you want the steps run as isolated workers with their own budgets and postconditions.
+
+### plan run
+
+```
+tomo plan run <job>
+```
+
+Plans the job and runs it to completion, streaming each step as it goes.
+The one positional argument is the job to do.
+If the job reads like a single turn it says so and runs it as a job anyway.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `-m`, `--model` | config `default_model` | Provider/model to plan and run with. |
+| `--concurrency` | `3` | How many independent steps may run at once. |
+| `--steps` | `40` | Step budget, a runaway backstop. `0` for unbounded. |
+
+### plan list
+
+```
+tomo plan list [--status <status>]
+```
+
+Lists the plans in the ledger: id, status, step progress, and a truncated goal.
+Prints a hint when there are none.
+Takes no positional arguments.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--status` | | Filter by status, like `running`, `done`, or `failed`. |
+
+### plan show
+
+```
+tomo plan show <id> [--follow]
+```
+
+Shows a plan's steps and their status.
+The one positional argument is the plan id from `plan list`.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--follow` | | Redraw live as the steps advance, for a plan that is still running. |
 
 ## onboard
 
