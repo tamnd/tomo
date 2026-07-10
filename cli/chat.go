@@ -16,7 +16,6 @@ import (
 	"github.com/tamnd/tomo/pkg/config"
 	"github.com/tamnd/tomo/pkg/curator"
 	"github.com/tamnd/tomo/pkg/memory"
-	"github.com/tamnd/tomo/pkg/orch"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/sandbox"
@@ -94,19 +93,12 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 	}
 	defer closeAudit()
 
-	// The trigger gate: a prompt with a clear multi-deliverable shape is a job,
-	// not a turn, so it escalates to the planner and runs as a plan. Everything
-	// else stays a single turn. The gate is biased toward turn, so a missed job
-	// degrades to one turn rather than planning something that did not need it.
-	if orch.TriggerJob(prompt) {
-		st, err := store.Open(filepath.Join(cfg.DataDir, "tomo.db"))
-		if err != nil {
-			return err
-		}
-		defer st.Close()
-		return runJob(cmd, st, cfg, guard, model, prompt, 3, 40)
-	}
-
+	// A one-shot prompt runs as a single turn. A multi-step job is not a separate
+	// execution mode here: the model plans it in context with the plan tool and
+	// works through it in this one turn, which keeps the whole job in one growing
+	// conversation rather than paying to rebuild state in a fresh context per step.
+	// The explicit `plan run` command still exists for a plan run under the DAG
+	// orchestrator when a caller wants steps run as isolated workers.
 	a, _, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
 	if err != nil {
 		return err

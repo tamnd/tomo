@@ -31,6 +31,7 @@ func TestClassesAreDeclared(t *testing.T) {
 		"write_file": tool.ClassWrite,
 		"fetch":      tool.ClassNet,
 		"time":       tool.ClassRead,
+		"plan":       tool.ClassRead,
 	}
 	for _, tl := range All(nil, "") {
 		if want[tl.Name] != tl.Class {
