@@ -62,6 +62,39 @@ CREATE TABLE IF NOT EXISTS cron_runs (
 	ok         INTEGER NOT NULL,
 	output     TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS plans (
+	id            TEXT PRIMARY KEY,
+	session       TEXT NOT NULL DEFAULT '',
+	channel       TEXT NOT NULL DEFAULT '',
+	goal          TEXT NOT NULL,
+	status        TEXT NOT NULL,
+	budget_tokens INTEGER NOT NULL DEFAULT 0,
+	budget_steps  INTEGER NOT NULL DEFAULT 0,
+	budget_wall   INTEGER NOT NULL DEFAULT 0,
+	spent_tokens  INTEGER NOT NULL DEFAULT 0,
+	attended      INTEGER NOT NULL DEFAULT 1,
+	created_at    INTEGER NOT NULL,
+	updated_at    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plan_steps (
+	rowid         INTEGER PRIMARY KEY,
+	plan_id       TEXT NOT NULL REFERENCES plans(id),
+	idx           INTEGER NOT NULL,
+	attempt       INTEGER NOT NULL DEFAULT 0,
+	uid           TEXT NOT NULL,
+	goal          TEXT NOT NULL,
+	deps          TEXT NOT NULL DEFAULT '[]',
+	inputs        TEXT NOT NULL DEFAULT '{}',
+	executor      TEXT NOT NULL,
+	postcondition TEXT NOT NULL DEFAULT '{}',
+	status        TEXT NOT NULL,
+	result        TEXT NOT NULL DEFAULT '',
+	tokens        INTEGER NOT NULL DEFAULT 0,
+	started_at    INTEGER NOT NULL DEFAULT 0,
+	ended_at      INTEGER NOT NULL DEFAULT 0,
+	UNIQUE (plan_id, idx, attempt)
+);
+CREATE INDEX IF NOT EXISTS plan_steps_plan ON plan_steps(plan_id, idx, attempt);
 `
 
 // Open opens (creating if needed) the ledger at path.
