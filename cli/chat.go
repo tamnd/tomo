@@ -92,6 +92,13 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 		return err
 	}
 	defer closeAudit()
+
+	// A one-shot prompt runs as a single turn. A multi-step job is not a separate
+	// execution mode here: the model plans it in context with the plan tool and
+	// works through it in this one turn, which keeps the whole job in one growing
+	// conversation rather than paying to rebuild state in a fresh context per step.
+	// The explicit `plan run` command still exists for a plan run under the DAG
+	// orchestrator when a caller wants steps run as isolated workers.
 	a, _, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
 	if err != nil {
 		return err

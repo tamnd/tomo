@@ -99,4 +99,33 @@ gen="$work/tree/pkg/channel/matrix/matrix.go"
   || fail "scaffolded driver did not compile"
 
 echo
+echo "eval 4: the tools catalog and the model's self-knowledge agree"
+# The catalog lists what tomo can do; the model is handed the same tools. So
+# 'tools search file' and the model's own answer to "what can you use to read a
+# file" must name the same builtin. This proves the catalog is not a separate
+# list that can drift from what a turn actually loads.
+search="$("$tomo" tools search file --config "$work/config.yaml")"
+echo "$search" | grep -q 'read_file' \
+  || { echo "$search"; fail "tools search file did not list read_file"; }
+out4="$(printf 'Name the exact tool you would call to read a text file from disk. Reply with just the tool name.\n/exit\n' \
+  | "$tomo" chat --config "$work/config.yaml" 2>&1)"
+echo "$out4" | grep -q 'read_file' \
+  && pass "the catalog and the model both name read_file" \
+  || { echo "$out4"; fail "the model did not name the tool the catalog lists"; }
+
+echo
+echo "eval 5: attach mcp writes a config that still loads"
+# One-step attach must produce a config the loader accepts, or it is worse than
+# hand-editing. Attach a server, then prove the same binary can load the result.
+acfg="$work/attach.yaml"
+cp "$work/config.yaml" "$acfg"
+"$tomo" tools attach mcp files --command mcp-server-filesystem --arg "$work" --config "$acfg" >/dev/null \
+  || fail "attach mcp returned an error"
+grep -q 'mcp-server-filesystem' "$acfg" \
+  || { cat "$acfg"; fail "attach did not write the server block"; }
+"$tomo" tools --config "$acfg" 2>&1 | grep -q 'mcp files' \
+  && pass "attached server is loaded and its dial attempt is reported" \
+  || { "$tomo" tools --config "$acfg"; fail "attached server not picked up by the catalog"; }
+
+echo
 printf '\033[32mall evals passed\033[0m\n'

@@ -302,10 +302,16 @@ func ChatToGemini(chat []byte) map[string]any {
 		}
 		for _, tc := range m.ToolCalls {
 			parts = append(parts, map[string]any{
-				"functionCall": map[string]any{"name": tc.Function.Name, "args": rawInput(tc.Function.Arguments)},
+				"functionCall": map[string]any{"name": tc.Function.Name, "args": geminiArgs(tc.Function.Arguments)},
 			})
 		}
 		finish = geminiFinish(c.Choices[0].FinishReason)
+	}
+	// A candidate with an empty parts array makes gemini-cli read
+	// content.parts[0] off undefined and crash, so keep at least an empty text
+	// part the way real Gemini does on an empty turn.
+	if len(parts) == 0 {
+		parts = append(parts, map[string]any{"text": ""})
 	}
 	return map[string]any{
 		"candidates": []any{map[string]any{
@@ -325,6 +331,31 @@ func geminiFinish(finish string) string {
 	default:
 		return "STOP"
 	}
+}
+
+// geminiArgs parses a tool_call arguments string into the object Gemini's
+// functionCall.args must be. The args field is a protobuf Struct on the wire,
+// so it only accepts a JSON object; when gemini-cli is handed an array, string,
+// number, or null it throws "An unexpected critical error occurred:[object
+// Object]". A well-formed object passes straight through, a scalar or array is
+// wrapped under "value" so nothing is dropped, and anything empty or unparseable
+// falls back to an empty object. This is the Gemini path only; rawInput stays as
+// is for the Anthropic and Responses wires that accept any shape.
+func geminiArgs(args string) map[string]any {
+	if strings.TrimSpace(args) == "" {
+		return map[string]any{}
+	}
+	var v any
+	if json.Unmarshal([]byte(args), &v) != nil {
+		return map[string]any{}
+	}
+	if obj, ok := v.(map[string]any); ok {
+		return obj
+	}
+	if v == nil {
+		return map[string]any{}
+	}
+	return map[string]any{"value": v}
 }
 
 // geminiUsage maps a chat usage block onto Gemini's usageMetadata token names,
@@ -465,8 +496,14 @@ func (s *geminiStream) finish() {
 	for _, idx := range s.order {
 		acc := s.tools[idx]
 		parts = append(parts, map[string]any{
-			"functionCall": map[string]any{"name": acc.name, "args": rawInput(acc.args.String())},
+			"functionCall": map[string]any{"name": acc.name, "args": geminiArgs(acc.args.String())},
 		})
+	}
+	// A text-only turn accumulates no tool parts, so the terminal chunk would
+	// carry an empty parts array and crash gemini-cli on content.parts[0]. Emit
+	// an empty text part instead, the way real Gemini closes a stream.
+	if len(parts) == 0 {
+		parts = append(parts, map[string]any{"text": ""})
 	}
 	s.emit(map[string]any{
 		"candidates": []any{map[string]any{

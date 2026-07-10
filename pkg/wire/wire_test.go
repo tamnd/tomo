@@ -2,6 +2,7 @@ package wire
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -311,6 +312,123 @@ func TestChatToGemini(t *testing.T) {
 	}
 	if um["cachedContentTokenCount"] != 3 {
 		t.Errorf("cached tokens lost: %v", um)
+	}
+}
+
+// TestChatToGeminiArgsAlwaysObject pins the invariant that a functionCall's args
+// is always a JSON object. Gemini's args is a protobuf Struct, so gemini-cli
+// crashes with "[object Object]" when a model hands back tool arguments that
+// parse to an array, string, number, or null. A real object passes through,
+// anything else is wrapped or dropped so the wire stays an object.
+func TestChatToGeminiArgsAlwaysObject(t *testing.T) {
+	cases := []struct {
+		name string
+		args string // the raw chat tool_call arguments string
+		want map[string]any
+	}{
+		{"object", `{"p":"a"}`, map[string]any{"p": "a"}},
+		{"array", `[1,2]`, map[string]any{"value": []any{1.0, 2.0}}},
+		{"string", `"x"`, map[string]any{"value": "x"}},
+		{"number", `5`, map[string]any{"value": 5.0}},
+		{"null", `null`, map[string]any{}},
+		{"empty", ``, map[string]any{}},
+		{"garbage", `not json`, map[string]any{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			argsJSON, _ := json.Marshal(c.args)
+			chat := []byte(`{"choices":[{"message":{"tool_calls":[{"function":{"name":"read","arguments":` + string(argsJSON) + `}}]},"finish_reason":"tool_calls"}]}`)
+			// Round-trip through JSON so the assertion sees the same shape the CLI does.
+			obj := ChatToGemini(chat)
+			b, err := json.Marshal(obj)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			m := asMap(t, b)
+			cand := m["candidates"].([]any)[0].(map[string]any)
+			parts := cand["content"].(map[string]any)["parts"].([]any)
+			fc := parts[0].(map[string]any)["functionCall"].(map[string]any)
+			gotArgs, ok := fc["args"].(map[string]any)
+			if !ok {
+				t.Fatalf("args must be an object, got %T: %v", fc["args"], fc["args"])
+			}
+			if !reflect.DeepEqual(gotArgs, c.want) {
+				t.Errorf("args = %v, want %v", gotArgs, c.want)
+			}
+		})
+	}
+}
+
+// TestChatToGeminiEmptyParts guards against a candidate whose parts array is
+// empty. An empty turn (no content, no tool calls) still needs at least one part
+// or gemini-cli reads content.parts[0] off undefined and crashes.
+func TestChatToGeminiEmptyParts(t *testing.T) {
+	cases := [][]byte{
+		[]byte(`{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`),
+		[]byte(`{"choices":[]}`),
+		[]byte(`{}`),
+	}
+	for _, chat := range cases {
+		obj := ChatToGemini(chat)
+		b, _ := json.Marshal(obj)
+		m := asMap(t, b)
+		cand := m["candidates"].([]any)[0].(map[string]any)
+		parts := cand["content"].(map[string]any)["parts"].([]any)
+		if len(parts) == 0 {
+			t.Errorf("empty candidate must still carry a part, got none for %s", chat)
+		}
+	}
+}
+
+// TestStreamGeminiTextOnlyTerminalParts checks that a text-only stream still
+// closes with a non-empty parts array. Without tool calls the terminal chunk
+// would otherwise emit parts:[] and crash gemini-cli.
+func TestStreamGeminiTextOnlyTerminalParts(t *testing.T) {
+	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\" there\"},\"finish_reason\":\"stop\"}]}\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}\n"
+	var b strings.Builder
+	StreamGemini(&b, nil, strings.NewReader(sse), nil)
+	out := b.String()
+	// Every emitted candidate must carry a non-empty parts array.
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		chunk := asMap(t, []byte(strings.TrimSpace(line[len("data:"):])))
+		cand := chunk["candidates"].([]any)[0].(map[string]any)
+		parts := cand["content"].(map[string]any)["parts"].([]any)
+		if len(parts) == 0 {
+			t.Errorf("streamed candidate has empty parts:\n%s", out)
+		}
+	}
+}
+
+// TestStreamGeminiToolArgsObject checks the streamed terminal chunk wraps a
+// non-object tool-call arguments string into an object, same as the non-streamed
+// path.
+func TestStreamGeminiToolArgsObject(t *testing.T) {
+	sse := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"read\",\"arguments\":\"[1,2]\"}}]},\"finish_reason\":\"tool_calls\"}]}\n"
+	var b strings.Builder
+	StreamGemini(&b, nil, strings.NewReader(sse), nil)
+	out := b.String()
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		chunk := asMap(t, []byte(strings.TrimSpace(line[len("data:"):])))
+		cand := chunk["candidates"].([]any)[0].(map[string]any)
+		for _, p := range cand["content"].(map[string]any)["parts"].([]any) {
+			fc, ok := p.(map[string]any)["functionCall"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if _, ok := fc["args"].(map[string]any); !ok {
+				t.Errorf("streamed functionCall args must be an object, got %T: %v", fc["args"], fc["args"])
+			}
+		}
 	}
 }
 

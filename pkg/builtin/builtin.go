@@ -27,7 +27,7 @@ import (
 // workspace anchors relative paths to the process working directory, which is
 // the behavior a plain install has always had.
 func All(exec sandbox.Sandbox, workspace string) []tool.Tool {
-	return []tool.Tool{shellTool(exec, workspace), readFileTool(workspace), writeFileTool(workspace), fetchTool(), timeTool()}
+	return []tool.Tool{shellTool(exec, workspace), readFileTool(workspace), writeFileTool(workspace), fetchTool(), timeTool(), planTool()}
 }
 
 func shellTool(box sandbox.Sandbox, workspace string) tool.Tool {

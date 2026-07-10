@@ -6,7 +6,7 @@ package cli
 import (
 	"context"
 
-	"github.com/charmbracelet/fang"
+	"charm.land/fang/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/tamnd/tomo/pkg/config"
@@ -58,8 +58,10 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newSessionsCmd())
 	root.AddCommand(newCronCmd())
+	root.AddCommand(newPlanCmd())
 	root.AddCommand(newSkillsCmd())
 	root.AddCommand(newChannelCmd())
+	root.AddCommand(newToolsCmd())
 	root.AddCommand(newMCPCmd())
 	root.AddCommand(newVersionCmd())
 	return root

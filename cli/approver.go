@@ -6,15 +6,19 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/tamnd/tomo/pkg/policy"
 )
 
 // termIO is the terminal's shared line reader and writer, used both for the
-// chat prompt and for approval questions so the two never fight over stdin.
+// chat prompt and for approval questions so the two never fight over stdin. The
+// mutex serializes approvals so concurrent plan steps ask one at a time and each
+// consumes exactly one answer, rather than racing on the reader.
 type termIO struct {
 	in  *bufio.Reader
 	out io.Writer
+	mu  sync.Mutex
 }
 
 func newTermIO(in io.Reader, out io.Writer) *termIO {
@@ -33,6 +37,8 @@ func (t *termIO) line() (string, bool) {
 // Approve implements policy.Approver against the terminal. It prints what the
 // tool wants to do and waits for y/n.
 func (t *termIO) Approve(_ context.Context, req policy.Request) (bool, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	fmt.Fprintf(t.out, "\n  tomo wants to run %q [%s]\n", req.Tool, req.Class)
 	if in := strings.TrimSpace(string(req.Input)); in != "" && in != "{}" {
 		fmt.Fprintf(t.out, "  input: %s\n", firstLines(in, 4))

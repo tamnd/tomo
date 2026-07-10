@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"text/template"
 
 	"github.com/spf13/cobra"
@@ -40,11 +39,24 @@ func newChannelListCmd() *cobra.Command {
 		Short: "List the channel drivers compiled into this binary",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			for _, name := range channel.Drivers() {
-				fmt.Fprintf(w, "%s\n", name)
+			out := cmd.OutOrStdout()
+			th := themeFor(out)
+			drivers := channel.Drivers()
+			// This is a list of identifiers a script reads line by line, so a
+			// pipe gets bare names and nothing else. A terminal gets the heading
+			// and the scaffold hint on top.
+			if !th.color {
+				for _, name := range drivers {
+					fmt.Fprintln(out, name)
+				}
+				return nil
 			}
-			return w.Flush()
+			fmt.Fprintf(out, "%s\n", th.heading("CHANNELS"))
+			for _, name := range drivers {
+				fmt.Fprintf(out, "  %s\n", th.name(name))
+			}
+			fmt.Fprintf(out, "\n%s\n", th.count(fmt.Sprintf("%d compiled in · tomo channel scaffold <name> to add one", len(drivers))))
+			return nil
 		},
 	}
 }
