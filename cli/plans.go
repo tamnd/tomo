@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func newPlanRunCmd() *cobra.Command {
 			}
 			defer st.Close()
 
-			tio := newTermIO(nil, cmd.OutOrStdout())
+			tio := newTermIO(os.Stdin, cmd.OutOrStdout())
 			guard, closeAudit, err := buildGuard(cfg, tio)
 			if err != nil {
 				return err
@@ -67,46 +68,10 @@ func newPlanRunCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			th := themeFor(out)
 
-			planner, err := buildPlanner(cfg, model)
-			if err != nil {
-				return err
-			}
 			if !orch.TriggerJob(goal) {
 				fmt.Fprintln(out, th.muted("note: this reads like a single turn; running it as a job anyway"))
 			}
-			fmt.Fprintln(out, th.muted("planning…"))
-			specs, err := planner.Plan(cmd.Context(), goal)
-			if err != nil {
-				return err
-			}
-
-			id, err := persistPlan(st, goal, specs, stepBudget)
-			if err != nil {
-				return err
-			}
-			plan, _ := st.Plan(id)
-			steps, _ := st.Steps(id)
-			fmt.Fprintln(out)
-			renderPlan(out, th, plan, steps)
-			fmt.Fprintln(out)
-
-			o := &orch.Orchestrator{
-				Store:       st,
-				Leaf:        planLeaf(cfg, guard),
-				Workspace:   cfg.Workspace,
-				Concurrency: concurrency,
-				Report:      func(s string) { fmt.Fprintln(out, "  "+th.muted(s)) },
-			}
-			if err := o.Run(cmd.Context(), id); err != nil {
-				return err
-			}
-
-			plan, _ = st.Plan(id)
-			steps, _ = st.Steps(id)
-			fmt.Fprintln(out)
-			renderPlan(out, th, plan, steps)
-			printResult(out, th, steps)
-			return nil
+			return runJob(cmd, st, cfg, guard, model, goal, concurrency, stepBudget)
 		},
 	}
 	cmd.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
@@ -202,6 +167,53 @@ func newPlanShowCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "redraw the step list as it advances")
 	return cmd
+}
+
+// runJob plans a goal into steps, persists it, runs it through the orchestrator
+// under the given guard, and renders the plan before and after. It is the
+// escalated path the trigger gate routes a job to, shared by `plan run` and the
+// one-shot `-p` gate, so a job runs the same way however it arrives.
+func runJob(cmd *cobra.Command, st *store.Store, cfg *config.Config, guard agent.Gate, model, goal string, concurrency, stepBudget int) error {
+	out := cmd.OutOrStdout()
+	th := themeFor(out)
+
+	planner, err := buildPlanner(cfg, model)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, th.muted("planning…"))
+	specs, err := planner.Plan(cmd.Context(), goal)
+	if err != nil {
+		return err
+	}
+
+	id, err := persistPlan(st, goal, specs, stepBudget)
+	if err != nil {
+		return err
+	}
+	plan, _ := st.Plan(id)
+	steps, _ := st.Steps(id)
+	fmt.Fprintln(out)
+	renderPlan(out, th, plan, steps)
+	fmt.Fprintln(out)
+
+	o := &orch.Orchestrator{
+		Store:       st,
+		Leaf:        planLeaf(cfg, guard),
+		Workspace:   cfg.Workspace,
+		Concurrency: concurrency,
+		Report:      func(s string) { fmt.Fprintln(out, "  "+th.muted(s)) },
+	}
+	if err := o.Run(cmd.Context(), id); err != nil {
+		return err
+	}
+
+	plan, _ = st.Plan(id)
+	steps, _ = st.Steps(id)
+	fmt.Fprintln(out)
+	renderPlan(out, th, plan, steps)
+	printResult(out, th, steps)
+	return nil
 }
 
 // buildPlanner wires the planner: the resolved provider and model, plus the

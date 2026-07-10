@@ -4,14 +4,23 @@ import "testing"
 
 func TestTriggerJob(t *testing.T) {
 	jobs := []string{
+		// three or more action verbs joined by conjunctions
 		"research these five HTTP libraries and write me a comparison",
-		"clean up the scripts directory and open a PR",
+		"fetch the prices, read the budget, and write the result",
+		// explicit job phrases
 		"for each failing test, fix it",
+		"do all of the following, then confirm it builds",
+		// an enumerated checklist
+		"Ship the release:\n- write taxes.go\n- fix the bug\n- run the tests",
 	}
 	turns := []string{
 		"what changed in cmd/root.go",
 		"rename this symbol",
 		"summarize CHANGES.md",
+		// a bare two-verb instruction is one turn, not a job: the "and" here
+		// joins a noun list, and a lone extra verb does not make a plan worth it
+		"read employees.json and write engineering.json sorted by name",
+		"clean up the scripts directory and open a PR",
 	}
 	for _, j := range jobs {
 		if !TriggerJob(j) {

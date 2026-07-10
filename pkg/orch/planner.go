@@ -35,37 +35,78 @@ type Planner struct {
 
 var conjRE = regexp.MustCompile(`(?i)\b(and|then|after that)\b`)
 
+// listItemRE matches a line that opens an enumerated task item: a bullet
+// (-, *, •) or a number followed by a delimiter. Two or more of these is an
+// explicit checklist, the clearest multi-deliverable shape a request can take.
+var listItemRE = regexp.MustCompile(`(?m)^\s*(?:[-*•]|\d+[.)])\s+\S`)
+
+// jobPhrases are unambiguous "this is a job" markers. A request that enumerates
+// its deliverables ("do all of the following"), asks for a workflow, or asks to
+// be worked step by step is asking for a plan, not a single answer.
+var jobPhrases = []string{
+	"for each", "each of", "do all of the following", "all of the following",
+	"do the following", "step by step", "step-by-step", "workflow",
+	"one at a time", "sub-agent", "subagent", "sub agents", "in parallel",
+}
+
 // jobVerbs are the imperative verbs whose repetition, joined by conjunctions,
-// signals a multi-deliverable job rather than a single turn.
+// signals a multi-deliverable job rather than a single turn. Each is matched as
+// a whole word with an optional inflection (fetch/fetches/fetched/fetching), so
+// the noun "readings" does not count as the verb "read".
 var jobVerbs = []string{
-	"research", "compare", "write", "post", "summarize", "fetch", "read", "open",
+	"research", "write", "post", "summarize", "fetch", "read", "open",
 	"build", "run", "test", "fix", "clean", "refactor", "reconcile", "review", "analyze",
 }
+
+// jobVerbRE holds one compiled matcher per verb, each accepting the base form or
+// a common inflection at a word boundary.
+var jobVerbRE = func() []*regexp.Regexp {
+	res := make([]*regexp.Regexp, len(jobVerbs))
+	for i, v := range jobVerbs {
+		res[i] = regexp.MustCompile(`(?i)\b` + v + `(s|es|ed|ing)?\b`)
+	}
+	return res
+}()
 
 // itemStop are verbs that mark the tail action of a "research X and do Y"
 // request, so a fragment carrying one is a clause, not a list item.
 var itemStop = []string{"write", "compar", "post", "summar", "create", "open", "then", "build"}
 
 // TriggerJob is the cheap, no-model structural signal from the spec: a request
-// with an explicit multi-deliverable shape (several imperative verbs joined by
-// conjunctions, or an explicit "for each"). It is deliberately biased toward
-// "turn": a missed job degrades to a normal turn, while a false positive wastes
-// planning tokens, so it fires only on a clear signal.
+// with an explicit multi-deliverable shape. Three signals fire it, in order of
+// how unambiguous they are: an enumerated checklist of two or more items, an
+// explicit job phrase ("do all of the following", "for each", "workflow"), or
+// three or more distinct action verbs joined by conjunctions. It is deliberately
+// biased toward "turn": a missed job just runs as one turn, while a false
+// positive wastes planning tokens and can fragment a task that needed one
+// context, so a single instruction with one or two verbs never fires (a bare
+// "read X and write Y" stays a turn; the compound bar is three).
 func TriggerJob(text string) bool {
 	low := strings.ToLower(text)
-	if strings.Contains(low, "for each") || strings.Contains(low, "each of") {
+	if len(listItemRE.FindAllString(text, 2)) >= 2 {
+		return true
+	}
+	for _, p := range jobPhrases {
+		if strings.Contains(low, p) {
+			return true
+		}
+	}
+	// The research-then-synthesize shape ("research these N and write a
+	// comparison") is a job even at two verbs: it is exactly what the template
+	// planner fans out, so it must reach the planner to be recognized.
+	if strings.Contains(low, "research") && (strings.Contains(low, "compar") || strings.Contains(low, "write")) {
 		return true
 	}
 	if !conjRE.MatchString(low) {
 		return false
 	}
 	verbs := 0
-	for _, v := range jobVerbs {
-		if regexp.MustCompile(`(?i)\b` + v).MatchString(low) {
+	for _, re := range jobVerbRE {
+		if re.MatchString(low) {
 			verbs++
 		}
 	}
-	return verbs >= 2
+	return verbs >= 3
 }
 
 // Plan produces a validated plan for a goal, choosing the cheapest path that

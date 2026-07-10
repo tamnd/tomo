@@ -16,6 +16,7 @@ import (
 	"github.com/tamnd/tomo/pkg/config"
 	"github.com/tamnd/tomo/pkg/curator"
 	"github.com/tamnd/tomo/pkg/memory"
+	"github.com/tamnd/tomo/pkg/orch"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/sandbox"
@@ -92,6 +93,20 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 		return err
 	}
 	defer closeAudit()
+
+	// The trigger gate: a prompt with a clear multi-deliverable shape is a job,
+	// not a turn, so it escalates to the planner and runs as a plan. Everything
+	// else stays a single turn. The gate is biased toward turn, so a missed job
+	// degrades to one turn rather than planning something that did not need it.
+	if orch.TriggerJob(prompt) {
+		st, err := store.Open(filepath.Join(cfg.DataDir, "tomo.db"))
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		return runJob(cmd, st, cfg, guard, model, prompt, 3, 40)
+	}
+
 	a, _, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
 	if err != nil {
 		return err
