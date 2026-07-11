@@ -288,6 +288,46 @@ func TestGeminiToChat(t *testing.T) {
 	}
 }
 
+// TestGeminiToolCallIDRoundTrip pins that the real upstream tool_call id survives
+// the Gemini round trip. The upstream mints an id the provider recognizes;
+// ChatToGemini hands it to the client as functionCall.id, and when the client
+// echoes it on the next turn GeminiToChat uses it verbatim rather than minting a
+// fresh call_N the provider never issued. Providers that validate tool_call ids
+// against ids they actually generated reject the synthesized form.
+func TestGeminiToolCallIDRoundTrip(t *testing.T) {
+	const realID = "call_00_KYV5NWhZ7fuwzEOVHCoU1804"
+
+	// Response side: the upstream id lands on functionCall.id.
+	chat := []byte(`{"choices":[{"message":{"content":null,"tool_calls":[{"id":"` + realID + `","function":{"name":"read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+	obj := ChatToGemini(chat)
+	parts := obj["candidates"].([]any)[0].(map[string]any)["content"].(map[string]any)["parts"].([]any)
+	fc := parts[0].(map[string]any)["functionCall"].(map[string]any)
+	if fc["id"] != realID {
+		t.Fatalf("functionCall.id = %v, want the upstream id %q", fc["id"], realID)
+	}
+
+	// Request side: the echoed id is used verbatim on both the assistant tool_call
+	// and the tool result, not replaced with a synthesized call_N.
+	body := []byte(`{"contents":[
+		{"role":"user","parts":[{"text":"go"}]},
+		{"role":"model","parts":[{"functionCall":{"id":"` + realID + `","name":"read","args":{}}}]},
+		{"role":"user","parts":[{"functionResponse":{"id":"` + realID + `","name":"read","response":{"body":"x"}}}]}
+	]}`)
+	c, err := GeminiToChat(body, "deepseek", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := asMap(t, c)["messages"].([]any)
+	asstID := msgs[1].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)["id"]
+	toolID := msgs[2].(map[string]any)["tool_call_id"]
+	if asstID != realID {
+		t.Errorf("assistant tool_call id = %v, want %q", asstID, realID)
+	}
+	if toolID != realID {
+		t.Errorf("tool_call_id = %v, want %q", toolID, realID)
+	}
+}
+
 func TestChatToGemini(t *testing.T) {
 	chat := []byte(`{"choices":[{"message":{"content":"hi","tool_calls":[{"function":{"name":"read","arguments":"{\"p\":\"a\"}"}}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10,"prompt_tokens_details":{"cached_tokens":3}}}`)
 	obj := ChatToGemini(chat)
@@ -444,6 +484,9 @@ func TestStreamGemini(t *testing.T) {
 	}
 	if !strings.Contains(out, `"functionCall"`) || !strings.Contains(out, `"name":"read"`) {
 		t.Errorf("terminal functionCall missing:\n%s", out)
+	}
+	if !strings.Contains(out, `"id":"t1"`) {
+		t.Errorf("streamed functionCall should carry the upstream id t1:\n%s", out)
 	}
 	if !strings.Contains(out, `"finishReason":"STOP"`) {
 		t.Errorf("terminal finishReason missing:\n%s", out)
