@@ -43,10 +43,12 @@ func IsGeminiPath(p string) (model string, stream bool, ok bool) {
 type geminiPart struct {
 	Text         string `json:"text"`
 	FunctionCall *struct {
+		ID   string          `json:"id"`
 		Name string          `json:"name"`
 		Args json.RawMessage `json:"args"`
 	} `json:"functionCall"`
 	FunctionResponse *struct {
+		ID       string          `json:"id"`
 		Name     string          `json:"name"`
 		Response json.RawMessage `json:"response"`
 	} `json:"functionResponse"`
@@ -86,8 +88,11 @@ func GeminiToChat(body []byte, model string, stream bool) (chat []byte, err erro
 			msgs = append(msgs, map[string]any{"role": "system", "content": sys})
 		}
 	}
-	// Gemini's functionResponse names no call id, so ids are synthesized here as
-	// each functionCall appears and matched by name when its result comes back.
+	// A tool call needs an id the model side recognizes. Newer Gemini carries one
+	// on functionCall/functionResponse, and it is the real upstream id round-tripped
+	// through gemini-cli, so it is used verbatim when present. When it is absent
+	// (older clients) an id is synthesized as each functionCall appears and matched
+	// by name when its result comes back.
 	pending := map[string][]string{}
 	callNo := 0
 	for _, c := range rr.Contents {
@@ -137,8 +142,11 @@ func geminiTurnToChat(c geminiContent, pending map[string][]string, callNo *int)
 		for _, p := range c.Parts {
 			switch {
 			case p.FunctionCall != nil:
-				id := fmt.Sprintf("call_%d", *callNo)
-				*callNo++
+				id := p.FunctionCall.ID
+				if id == "" {
+					id = fmt.Sprintf("call_%d", *callNo)
+					*callNo++
+				}
 				pending[p.FunctionCall.Name] = append(pending[p.FunctionCall.Name], id)
 				args := string(p.FunctionCall.Args)
 				if strings.TrimSpace(args) == "" {
@@ -171,7 +179,10 @@ func geminiTurnToChat(c geminiContent, pending map[string][]string, callNo *int)
 	for _, p := range c.Parts {
 		switch {
 		case p.FunctionResponse != nil:
-			id := popPending(pending, p.FunctionResponse.Name)
+			id := p.FunctionResponse.ID
+			if id == "" {
+				id = popPending(pending, p.FunctionResponse.Name)
+			}
 			out = append(out, map[string]any{"role": "tool", "tool_call_id": id, "content": geminiResponseText(p.FunctionResponse.Response)})
 		case p.Text != "":
 			text.WriteString(p.Text)
@@ -282,6 +293,7 @@ func ChatToGemini(chat []byte) map[string]any {
 			Message struct {
 				Content   string `json:"content"`
 				ToolCalls []struct {
+					ID       string `json:"id"`
 					Function struct {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
@@ -301,9 +313,13 @@ func ChatToGemini(chat []byte) map[string]any {
 			parts = append(parts, map[string]any{"text": m.Content})
 		}
 		for _, tc := range m.ToolCalls {
-			parts = append(parts, map[string]any{
-				"functionCall": map[string]any{"name": tc.Function.Name, "args": geminiArgs(tc.Function.Arguments)},
-			})
+			fc := map[string]any{"name": tc.Function.Name, "args": geminiArgs(tc.Function.Arguments)}
+			// Carry the upstream call id back to the client so its functionResponse
+			// echoes it and the follow-up turn keeps the id the provider issued.
+			if tc.ID != "" {
+				fc["id"] = tc.ID
+			}
+			parts = append(parts, map[string]any{"functionCall": fc})
 		}
 		finish = geminiFinish(c.Choices[0].FinishReason)
 	}
@@ -443,6 +459,7 @@ type geminiStream struct {
 
 // geminiToolAcc accumulates one streamed function call until it can be emitted.
 type geminiToolAcc struct {
+	id   string
 	name string
 	args strings.Builder
 }
@@ -478,6 +495,9 @@ func (s *geminiStream) chunk(c chatChunk) {
 			if tc.Function.Name != "" && acc.name == "" {
 				acc.name = tc.Function.Name
 			}
+			if tc.ID != "" && acc.id == "" {
+				acc.id = tc.ID
+			}
 			acc.args.WriteString(tc.Function.Arguments)
 		}
 		if ch.FinishReason != "" {
@@ -495,9 +515,12 @@ func (s *geminiStream) finish() {
 	parts := []any{}
 	for _, idx := range s.order {
 		acc := s.tools[idx]
-		parts = append(parts, map[string]any{
-			"functionCall": map[string]any{"name": acc.name, "args": geminiArgs(acc.args.String())},
-		})
+		fc := map[string]any{"name": acc.name, "args": geminiArgs(acc.args.String())}
+		// Carry the upstream call id back so the client's functionResponse echoes it.
+		if acc.id != "" {
+			fc["id"] = acc.id
+		}
+		parts = append(parts, map[string]any{"functionCall": fc})
 	}
 	// A text-only turn accumulates no tool parts, so the terminal chunk would
 	// carry an empty parts array and crash gemini-cli on content.parts[0]. Emit
