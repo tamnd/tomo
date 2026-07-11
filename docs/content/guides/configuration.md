@@ -67,11 +67,10 @@ Any endpoint that speaks the OpenAI chat completions dialect and returns `tool_c
 
 ```yaml
 agent:
-  max_tokens: 32768
   max_turns: 24
 ```
 
-- `max_tokens` caps a single model response, defaulting to 32768. Reasoning models spend part of that budget on hidden reasoning before the visible reply, so a small cap truncates the answer or the tool call; the default leaves room for both.
+- `max_tokens` caps a single model response. It is unset by default, so the model runs to its own limit; set it to put a ceiling back. A low cap truncates the answer or the tool call on a reasoning model, which spends part of the budget on hidden reasoning before the visible reply.
 - `max_turns` caps the tool-use rounds in one turn before tomo stops, defaulting to 24.
 
 ## Policy

@@ -156,13 +156,12 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	if c.Agent.MaxTokens == 0 {
-		// Reasoning models spend a large slice of the output budget on hidden
-		// reasoning tokens before they emit anything, so a small cap gets the
-		// visible reply or the tool call truncated mid-stream. Leave enough room
-		// for the reasoning plus a substantial answer or file write.
-		c.Agent.MaxTokens = 32768
-	}
+	// max_tokens is left unset by default. A fixed cap is a guess, and on a
+	// reasoning model a low one truncates the reply or the tool call once the
+	// hidden reasoning has eaten the budget. Zero means "send no cap": the
+	// OpenAI-style providers omit the field so the model runs to its own limit,
+	// and the Anthropic provider, whose API requires the field, fills its own
+	// fallback. Set max_tokens in the config to put a ceiling back.
 	if c.Agent.MaxTurns == 0 {
 		c.Agent.MaxTurns = 24
 	}

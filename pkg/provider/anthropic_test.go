@@ -129,6 +129,41 @@ func TestAnthropicStream(t *testing.T) {
 	}
 }
 
+// Anthropic requires max_tokens, so an unset budget falls back to a safe
+// default while an explicit one passes through unchanged.
+func TestAnthropicMaxTokensFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  int
+		want float64
+	}{
+		{"unset", 0, defaultAnthropicMaxTokens},
+		{"explicit", 500, 500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(raw, &gotBody)
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, anthropicFixture)
+			}))
+			defer srv.Close()
+
+			p := &Anthropic{APIKey: "sk-test", BaseURL: srv.URL}
+			_, err := p.Stream(context.Background(), Request{
+				Model: "claude-test", MaxTokens: tc.req, Messages: []Message{UserText("hi")},
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotBody["max_tokens"] != tc.want {
+				t.Errorf("max_tokens = %v, want %v", gotBody["max_tokens"], tc.want)
+			}
+		})
+	}
+}
+
 func TestAnthropicHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"bad key"}}`, http.StatusUnauthorized)
