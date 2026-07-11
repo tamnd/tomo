@@ -14,6 +14,7 @@ func TestSystemPromptSections(t *testing.T) {
 	for _, want := range []string{
 		"You are tomo (友)",
 		"call the plan tool first to lay out the steps",
+		"Never end the turn on code you have not run.",
 		"Today is Friday, 2026-07-10.",
 	} {
 		if !strings.Contains(bare, want) {
