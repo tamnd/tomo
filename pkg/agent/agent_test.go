@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tamnd/tomo/pkg/provider"
@@ -191,6 +195,54 @@ func TestTurnCap(t *testing.T) {
 	_, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
 	if err == nil || !strings.Contains(err.Error(), "turn cap") {
 		t.Errorf("err = %v, want turn cap", err)
+	}
+}
+
+// A transient upstream failure (a 502 here) is retried within the turn, so one
+// flaky stream does not sink the whole turn.
+func TestTurnRetriesTransientStream(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, `{"error":"upstream hiccup"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n")
+	}))
+	defer srv.Close()
+
+	a := &Agent{Provider: &provider.OpenAI{APIKey: "sk", BaseURL: srv.URL + "/v1"}, Model: "m", Tools: tool.NewRegistry(echoTool())}
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("hi"), nil)
+	if err != nil {
+		t.Fatalf("turn should have retried past the 502: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("upstream calls = %d, want 2 (one 502, then success)", got)
+	}
+	last := turn[len(turn)-1]
+	if last.Role != provider.RoleAssistant || len(last.Blocks) == 0 || last.Blocks[0].Text != "done" {
+		t.Errorf("recovered turn = %+v", turn)
+	}
+}
+
+// A permanent error (a 400) is not retried: the turn fails on the first call.
+func TestTurnDoesNotRetryPermanent(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"bad model"}`)
+	}))
+	defer srv.Close()
+
+	a := &Agent{Provider: &provider.OpenAI{APIKey: "sk", BaseURL: srv.URL + "/v1"}, Model: "m", Tools: tool.NewRegistry(echoTool())}
+	if _, err := a.Turn(context.Background(), nil, provider.UserText("hi"), nil); err == nil {
+		t.Fatal("want error on a 400")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("upstream calls = %d, want 1 (no retry on 400)", got)
 	}
 }
 
