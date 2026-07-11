@@ -157,7 +157,11 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) applyDefaults() {
 	if c.Agent.MaxTokens == 0 {
-		c.Agent.MaxTokens = 8192
+		// Reasoning models spend a large slice of the output budget on hidden
+		// reasoning tokens before they emit anything, so a small cap gets the
+		// visible reply or the tool call truncated mid-stream. Leave enough room
+		// for the reasoning plus a substantial answer or file write.
+		c.Agent.MaxTokens = 32768
 	}
 	if c.Agent.MaxTurns == 0 {
 		c.Agent.MaxTurns = 24
