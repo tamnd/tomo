@@ -59,7 +59,7 @@ You can define as many providers as you like and switch between them per command
 
 ```yaml
 agent:
-  max_tokens: 8192
+  max_tokens: 32768
   max_turns: 24
 ```
 
@@ -67,7 +67,7 @@ The loop knobs shared by every front end.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `max_tokens` | `8192` | Maximum tokens the model may generate per turn. |
+| `max_tokens` | `32768` | Maximum tokens the model may generate per turn, hidden reasoning included. |
 | `max_turns` | `24` | Maximum tool-use rounds in a single turn before tomo stops looping. |
 
 Either key set to zero falls back to its default.
@@ -341,7 +341,7 @@ providers:
     api_key: ${LOCAL_API_KEY}
 
 agent:
-  max_tokens: 8192
+  max_tokens: 32768
   max_turns: 24
 
 # Reads and network run; writes and code execution ask first.
