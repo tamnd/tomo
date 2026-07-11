@@ -69,21 +69,27 @@ A model is named `provider/model`, so the `local` provider above serves models l
 
 ## The Hi! baseline
 
-[tomo-labs](https://github.com/tamnd/tomo-labs) runs tomo and six other coding agents through the same tasks on the same free model, through a proxy that forces deterministic decoding and records every request verbatim, so the only thing that differs between rows is the tool. Its simplest scenario, `00-hello`, is just the prompt `Hi!`, no task beyond completing the round trip, which isolates the fixed cost every tool pays before it does any real work:
+[tomo-labs](https://github.com/tamnd/tomo-labs) runs tomo and ten other coding agents through the same tasks on the same fixed free model, through a proxy that forces deterministic decoding and records every request verbatim, so the only thing that differs between rows is the tool. Its simplest scenario, `00-hello`, is just the prompt `Hi!`, no task beyond completing the round trip, which isolates the fixed cost every tool pays before it does any real work:
 
-| tool | tokens | cached | ttfb | rss | wall | requests |
-| --- | --- | --- | --- | --- | --- | --- |
-| tomo | 1,153 | 1,024 | 761ms | 12MB | 2s | 2 |
-| gemini-cli | 8,001 | 2,048 | 1090ms | 363MB | 5s | 3 |
-| codex | 7,593 | 7,424 | 852ms | 92MB | 2s | 2 |
-| opencode | 7,260 | 7,168 | 779ms | 643MB | 3s | 3 |
-| openclaw | 16,770 | 7,552 | 1129ms | 362MB | 32s | 2 |
-| claude-code | 19,183 | 19,072 | 1105ms | 287MB | 2s | 3 |
-| hermes | 13,611 | — | 981ms | 122MB | 19s | 26 |
+| tool | tokens | ttfb | rss | wall |
+| --- | --- | --- | --- | --- |
+| pi | 1,632 | 765ms | 170MB | 9s |
+| tomo | 1,660 | 776ms | 12MB | 1s |
+| codex | 7,830 | 872ms | 90MB | 2s |
+| gemini-cli | 7,919 | 1350ms | 238MB | 6s |
+| opencode | 8,243 | 803ms | 646MB | 2s |
+| kilocode | 10,465 | 926ms | 625MB | 6s |
+| copilot | 12,679 | 1143ms | 376MB | 3s |
+| hermes | 14,680 | 1989ms | 121MB | 17s |
+| openclaw | 18,641 | 1344ms | 368MB | 37s |
+| claude-code | 20,327 | 1684ms | 290MB | 12s |
+| aider | 32,607 | 774ms | 238MB | 256s |
 
-tomo's floor is roughly a tenth of the next tool's, because its system prompt and tool schema are smaller and it doesn't re-read its own context to say hello. hermes's 26 requests on a one-line greeting is an outlier worth flagging rather than hiding: its scenario runner retries in a loop that a plain acknowledgment doesn't satisfy on the first try, which also explains openclaw's 32-second wall time against everyone else's low single digits.
+tomo and pi sit at the floor, both under 1,700 tokens to say hello, roughly a tenth of the next tool up, because their system prompt and tool schema are small and neither re-reads its own context for a one-line greeting. The heavier tools carry a large standing prompt and a wide tool schema on every turn, and pay for all of it here before any real work begins.
 
-See the full scenario suite, install footprints, and pass rates for all seven tools at [tamnd/tomo-labs](https://github.com/tamnd/tomo-labs#results).
+Two rows are artifacts worth flagging rather than hiding. aider's 32,607 tokens and four-minute wall are the harness's own doing: aider sends no output cap, so on this model it ran to the proxy's 32,000-token ceiling instead of stopping at a greeting. And hermes fires a couple dozen requests for a one-line `Hi!`, but only one is a real completion; the rest are capability probes to discovery endpoints that the proxy answers with a 404, not a retry loop.
+
+See the full scenario suite, install footprints, and pass rates for all eleven tools at [tamnd/tomo-labs](https://github.com/tamnd/tomo-labs#results).
 
 ## How it's built
 
