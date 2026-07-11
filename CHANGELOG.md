@@ -4,6 +4,36 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+## v0.2.4
+
+Finishes the job on the first try more often: the agent runs the tests before it
+claims to be done, and a reasoning model is no longer cut off mid-answer by a low
+token cap.
+
+### Changed
+
+- The agent verifies its own code before ending a turn. When it writes or changes
+  code the system prompt now tells it to run the project's tests or build, read
+  the output, and keep fixing until they pass. A clean exit with no error output
+  used to be enough for it to call a task done, which meant a wrong first draft
+  shipped untested; now only a passing run ends the turn.
+- `max_tokens` is left unset by default instead of capped at 8192. A fixed cap is
+  a guess, and on a reasoning model a low one gets the reply or the tool call
+  truncated once the hidden reasoning has spent the budget. Zero now means send no
+  cap, so the model runs to its own limit, which is what the OpenAI-style
+  providers already do when the field is omitted. The Anthropic provider, whose
+  API requires the field, falls back to 32000, the largest output every current
+  Claude model accepts. Set `max_tokens` in the config to put a ceiling back.
+
+### Fixed
+
+- A Gemini-backed run keeps the real tool_call id end to end. Gemini's protocol
+  carries function names, not ids, so the wire used to mint its own id for each
+  call, which an upstream that only honors the ids it issued would reject and the
+  tool loop would stall. The id now rides through Gemini's `functionCall.id` and
+  `functionResponse.id` fields when the client sends one, and is synthesized only
+  when it is absent, so the continuation carries the id the server expects.
+
 ## v0.2.3
 
 Makes a multi-step job cheap: tomo plans it in context instead of paying to
