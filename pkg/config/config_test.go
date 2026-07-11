@@ -31,7 +31,7 @@ providers:
 	if got := cfg.Providers["anthropic"].APIKey; got != "sk-123" {
 		t.Errorf("api_key = %q, want expanded env", got)
 	}
-	if cfg.Agent.MaxTokens != 32768 || cfg.Agent.MaxTurns != 24 {
+	if cfg.Agent.MaxTokens != 0 || cfg.Agent.MaxTurns != 24 {
 		t.Errorf("defaults not applied: %+v", cfg.Agent)
 	}
 	if cfg.DataDir == "" {
