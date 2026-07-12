@@ -1,6 +1,6 @@
 ---
 title: "Config file"
-description: "Every key in ~/.tomo/config.yaml: the model and providers, agent knobs, policy, channels, heartbeat, voice, MCP servers, workers, and the data dir."
+description: "Every key in ~/.tomo/config.yaml: the model and providers, policy, channels, heartbeat, voice, MCP servers, workers, and the data dir."
 weight: 20
 ---
 

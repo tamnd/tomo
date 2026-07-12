@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-description: "A tour of ~/.tomo/config.yaml: the default model, providers for Anthropic and OpenAI-dialect servers, ${VAR} env expansion, the agent knobs, the policy gate, the data directory, and pointers to every section documented in its own guide."
+description: "A tour of ~/.tomo/config.yaml: the default model, providers for Anthropic and OpenAI-dialect servers, ${VAR} env expansion, the policy gate, the data directory, and pointers to every section documented in its own guide."
 weight: 80
 ---
 
