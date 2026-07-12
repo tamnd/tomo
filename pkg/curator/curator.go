@@ -26,10 +26,9 @@ import (
 
 // Curator reflects on finished turns and curates memory from them.
 type Curator struct {
-	Provider  provider.Provider
-	Model     string
-	Memory    *memory.Memory
-	MaxTokens int
+	Provider provider.Provider
+	Model    string
+	Memory   *memory.Memory
 	// Skills is the installed skill store, read here only so the curator can
 	// avoid drafting one that already exists. Drafts is where a proposed skill
 	// is written. Both nil means the curator only curates memory; installing a
@@ -85,12 +84,10 @@ func (c *Curator) Reflect(ctx context.Context, source string, history, turn []pr
 		reg.Add(skillDraftTool(c.Drafts))
 	}
 	a := &agent.Agent{
-		Provider:  c.Provider,
-		Model:     c.Model,
-		System:    c.system(),
-		Tools:     reg,
-		MaxTokens: c.MaxTokens,
-		MaxTurns:  6,
+		Provider: c.Provider,
+		Model:    c.Model,
+		System:   c.system(),
+		Tools:    reg,
 	}
 	prompt := "Here is the conversation to reflect on. The earlier context is for background; " +
 		"curate memory from the most recent exchange.\n\n" + transcript(history, turn)

@@ -76,11 +76,10 @@ type Tool struct {
 
 // Request is one model call.
 type Request struct {
-	Model     string
-	System    string
-	Messages  []Message
-	Tools     []Tool
-	MaxTokens int
+	Model    string
+	System   string
+	Messages []Message
+	Tools    []Tool
 }
 
 // Usage counts tokens for one call.

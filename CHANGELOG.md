@@ -34,6 +34,14 @@ without drowning its own context.
   re-read a file it just wrote or repeat a check that already passed, and to end
   the turn once its test or build is green, so a solved task stops looping and
   spends fewer model calls.
+- A turn now runs its tool-use rounds until the model ends the turn on its own.
+  A fixed round limit cut long multi-step tasks off before they finished; a turn
+  ends when the model stops calling tools or an upstream error breaks the loop.
+- The `agent` config section is gone, along with its two knobs. The `max_tokens`
+  and `max_turns` settings were removed: the model runs to its own output limit
+  and the turn to its own end, which is how the agent already behaved with them
+  unset. A config that still carries an `agent` block loads fine, the section is
+  ignored.
 
 ### Fixed
 

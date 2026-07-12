@@ -236,11 +236,10 @@ func buildPlanner(cfg *config.Config, model string) (*orch.Planner, error) {
 		tools = append(tools, d.Name)
 	}
 	return &orch.Planner{
-		Provider:  p,
-		Model:     modelID,
-		MaxTokens: cfg.Agent.MaxTokens,
-		Tools:     tools,
-		Workers:   []string{channel.DefaultWorker},
+		Provider: p,
+		Model:    modelID,
+		Tools:    tools,
+		Workers:  []string{channel.DefaultWorker},
 	}, nil
 }
 

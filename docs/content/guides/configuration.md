@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-description: "A tour of ~/.tomo/config.yaml: the default model, providers for Anthropic and OpenAI-dialect servers, ${VAR} env expansion, the agent knobs, the policy gate, the data directory, and pointers to every section documented in its own guide."
+description: "A tour of ~/.tomo/config.yaml: the default model, providers for Anthropic and OpenAI-dialect servers, ${VAR} env expansion, the policy gate, the data directory, and pointers to every section documented in its own guide."
 weight: 80
 ---
 
@@ -60,18 +60,6 @@ Each provider takes `type`, `api_key`, and, for the OpenAI dialect, `base_url`.
 The provider key is yours to choose; the model after the slash is whatever name the endpoint serves.
 So `local/some-model` routes to the local server and `gateway/some-model` to the hosted one, with no code change.
 Any endpoint that speaks the OpenAI chat completions dialect and returns `tool_calls` drives the full agent loop, so a self-hosted model and a hosted gateway configure the same way.
-
-## Agent
-
-`agent` holds the loop knobs:
-
-```yaml
-agent:
-  max_turns: 24
-```
-
-- `max_tokens` caps a single model response. It is unset by default, so the model runs to its own limit; set it to put a ceiling back. A low cap truncates the answer or the tool call on a reasoning model, which spends part of the budget on hidden reasoning before the visible reply.
-- `max_turns` caps the tool-use rounds in one turn before tomo stops, defaulting to 24.
 
 ## Policy
 

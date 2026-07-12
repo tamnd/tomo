@@ -26,11 +26,10 @@ type StepSpec struct {
 // one planning model call for a novel job, and validates the result before it
 // ever runs, since the model cannot be trusted to check its own plan.
 type Planner struct {
-	Provider  provider.Provider
-	Model     string
-	MaxTokens int
-	Tools     []string // tool names a `tool:<name>` executor may reference
-	Workers   []string // worker names a `worker:<name>` executor may reference
+	Provider provider.Provider
+	Model    string
+	Tools    []string // tool names a `tool:<name>` executor may reference
+	Workers  []string // worker names a `worker:<name>` executor may reference
 }
 
 var conjRE = regexp.MustCompile(`(?i)\b(and|then|after that)\b`)
@@ -233,10 +232,9 @@ func (p *Planner) planLLM(ctx context.Context, goal, feedback string) ([]StepSpe
 		user += "\n\nYour previous plan was invalid: " + feedback + "\nReturn a corrected plan."
 	}
 	req := provider.Request{
-		Model:     p.Model,
-		System:    planSystem,
-		Messages:  []provider.Message{provider.UserText(user)},
-		MaxTokens: p.MaxTokens,
+		Model:    p.Model,
+		System:   planSystem,
+		Messages: []provider.Message{provider.UserText(user)},
 	}
 	resp, err := p.Provider.Stream(ctx, req, nil)
 	if err != nil {

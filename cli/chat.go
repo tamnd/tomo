@@ -165,8 +165,6 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 		System:    agent.SystemPrompt(time.Now(), workspace, b.persona, index, skillIndex),
 		Tools:     reg,
 		Gate:      guard,
-		MaxTokens: cfg.Agent.MaxTokens,
-		MaxTurns:  cfg.Agent.MaxTurns,
 		Workspace: workspace,
 	}
 	return a, name + "/" + modelID, nil
@@ -195,12 +193,11 @@ func buildCurator(cfg *config.Config, b curatorBuild) (*curator.Curator, error) 
 		return nil, fmt.Errorf("provider %s: %w", name, err)
 	}
 	return &curator.Curator{
-		Provider:  p,
-		Model:     modelID,
-		Memory:    &memory.Memory{Dir: orDefault(b.memoryDir, filepath.Join(cfg.DataDir, "memory"))},
-		Skills:    &skill.Store{Dir: orDefault(b.skillsDir, filepath.Join(cfg.DataDir, "skills"))},
-		Drafts:    &skill.Store{Dir: orDefault(b.draftsDir, filepath.Join(cfg.DataDir, "skill-drafts"))},
-		MaxTokens: cfg.Agent.MaxTokens,
+		Provider: p,
+		Model:    modelID,
+		Memory:   &memory.Memory{Dir: orDefault(b.memoryDir, filepath.Join(cfg.DataDir, "memory"))},
+		Skills:   &skill.Store{Dir: orDefault(b.skillsDir, filepath.Join(cfg.DataDir, "skills"))},
+		Drafts:   &skill.Store{Dir: orDefault(b.draftsDir, filepath.Join(cfg.DataDir, "skill-drafts"))},
 	}, nil
 }
 

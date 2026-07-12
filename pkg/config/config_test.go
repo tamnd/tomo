@@ -31,9 +31,6 @@ providers:
 	if got := cfg.Providers["anthropic"].APIKey; got != "sk-123" {
 		t.Errorf("api_key = %q, want expanded env", got)
 	}
-	if cfg.Agent.MaxTokens != 0 || cfg.Agent.MaxTurns != 24 {
-		t.Errorf("defaults not applied: %+v", cfg.Agent)
-	}
 	if cfg.DataDir == "" {
 		t.Error("data_dir default missing")
 	}
@@ -66,8 +63,8 @@ future_feature:
 	if err != nil {
 		t.Fatalf("older config failed to load: %v", err)
 	}
-	if cfg.Agent.MaxTurns != 24 || cfg.DataDir == "" {
-		t.Errorf("defaults not applied to older config: %+v", cfg.Agent)
+	if cfg.DataDir == "" {
+		t.Errorf("defaults not applied to older config: %+v", cfg)
 	}
 	if _, _, pc, err := cfg.Resolve(""); err != nil || pc.APIKey != "sk-old" {
 		t.Errorf("older config did not resolve its provider: %+v %v", pc, err)

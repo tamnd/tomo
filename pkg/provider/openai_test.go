@@ -50,9 +50,8 @@ func TestOpenAIStream(t *testing.T) {
 	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
 	var streamed strings.Builder
 	resp, err := p.Stream(context.Background(), Request{
-		Model:     "qwen3-32b",
-		System:    "be nice",
-		MaxTokens: 100,
+		Model:  "qwen3-32b",
+		System: "be nice",
 		Messages: []Message{
 			UserText("check uptime"),
 			{Role: RoleAssistant, Blocks: []Block{

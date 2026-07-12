@@ -109,7 +109,7 @@ func newTestRouterCur(t *testing.T, cur *curator.Curator, resp []*provider.Respo
 	sp := &scriptProvider{responses: resp}
 	reg := tool.NewRegistry(tools...)
 	newAgent := func() (*agent.Agent, error) {
-		return &agent.Agent{Provider: sp, Model: "m", Tools: reg, MaxTurns: 8}, nil
+		return &agent.Agent{Provider: sp, Model: "m", Tools: reg}, nil
 	}
 	work := Solo(newAgent, policy.New(policy.Config{}), cur)
 	return NewRouter(st, work, nil, nil, nil), sp, st

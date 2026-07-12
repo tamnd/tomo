@@ -26,10 +26,6 @@ providers:
   #   base_url: http://gamingpc:8000/v1
   #   api_key: ${LOCAL_API_KEY}
 
-agent:
-  max_tokens: 8192
-  max_turns: 24
-
 # Every tool call passes this gate. Class defaults shown are the built-in
 # safe posture: reads and network run, writes and code execution ask first.
 # Once a session fetches untrusted content, writes and exec escalate to ask

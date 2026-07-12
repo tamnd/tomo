@@ -20,13 +20,12 @@ type Anthropic struct {
 
 const anthropicVersion = "2023-06-01"
 
-// defaultAnthropicMaxTokens is the ceiling used when the caller sets no
-// max_tokens. The Messages API requires the field, so we pick it from what the
-// current Claude family can actually emit: Opus tops out at 32000 output tokens
-// and Sonnet and Haiku go higher, so 32000 is the largest value every current
-// model accepts without a 400. Point tomo at an older model with a lower cap and
-// set max_tokens in the config.
-const defaultAnthropicMaxTokens = 32000
+// anthropicOutputCeiling is the value sent for the field the Messages API
+// requires on every call. It is picked from what the current Claude family can
+// actually emit: Opus tops out at 32000 output tokens and Sonnet and Haiku go
+// higher, so 32000 is the largest value every current model accepts without a
+// 400. It is not an agent knob, only the wire field the API insists on.
+const anthropicOutputCeiling = 32000
 
 func (a *Anthropic) client() *http.Client {
 	if a.Client != nil {
@@ -97,16 +96,12 @@ func anthPartOf(b Block) (anthPart, error) {
 
 // Stream implements Provider.
 func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) (*Response, error) {
-	// Anthropic requires max_tokens, unlike the OpenAI-style APIs that treat it
-	// as optional, so fall back to a value every current Claude model accepts
-	// when the caller leaves it unset.
-	maxTokens := req.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = defaultAnthropicMaxTokens
-	}
+	// The Messages API requires the output-ceiling field on every call, unlike
+	// the OpenAI-style APIs that omit it, so send the value every current Claude
+	// model accepts.
 	body := map[string]any{
 		"model":      req.Model,
-		"max_tokens": maxTokens,
+		"max_tokens": anthropicOutputCeiling,
 		"stream":     true,
 	}
 	if req.System != "" {
