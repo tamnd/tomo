@@ -80,8 +80,8 @@ policy:
   write: ask
   exec: ask
   rules:
-    shell: deny
-    write_file: allow
+    bash: deny
+    write: allow
 ```
 
 The gate every tool call passes before it runs.
@@ -315,7 +315,7 @@ Defaults to `~/.tomo`.
 workspace: ~/tomo
 ```
 
-The working directory the `read_file`, `write_file`, and `shell` tools are rooted at.
+The working directory the `read`, `write`, and `bash` tools are rooted at.
 A relative path the agent writes lands here, the shell runs here, and the agent is told where it is in its system prompt so it stops guessing a home directory.
 An absolute path the agent gives is still honored as-is, and a `~` prefix still expands to the home directory.
 Defaults to the directory tomo was launched from, which keeps the old behavior where a relative path resolved against the process working directory.
@@ -350,8 +350,8 @@ policy:
   write: ask
   exec: ask
   rules:
-    shell: deny          # never run shell, whatever the class says
-    write_file: allow    # trust file writes without a prompt
+    bash: deny           # never run shell, whatever the class says
+    write: allow         # trust file writes without a prompt
 
 # Confine an approved shell command at the OS level. none by default.
 sandbox: none

@@ -85,8 +85,8 @@ policy:
   write: ask
   exec: ask
   rules:
-    # shell: deny
-    # write_file: allow
+    # bash: deny
+    # write: allow
 ```
 
 This is the shortest possible summary.
