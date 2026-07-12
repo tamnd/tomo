@@ -56,6 +56,23 @@ const maxToolResult = 100_000
 // same history, so the retry is cheap next to restarting the task.
 const maxCallRetries = 3
 
+// maxTruncationNudges bounds how many times a turn recovers from a reply that
+// hit the model's output ceiling before it acted. A reasoning model can spend
+// its whole output budget on hidden reasoning and come back with a length stop
+// and no tool call at all; treating that as the model ending its turn would
+// abandon the task having done nothing. The loop nudges it to act instead. The
+// bound keeps a model that will not stop reasoning from spinning forever.
+const maxTruncationNudges = 3
+
+// truncationNudge redirects a cut-off reply toward a concrete next step, so a
+// turn that ran out of output room mid-thought does not just stop.
+const truncationNudge = "Your previous reply was cut off at the output length limit before you acted. Stop deliberating and take one concrete step now: make a single tool call to move the task forward."
+
+// truncationMark stands in for a reply that hit the ceiling with nothing to
+// show for it. An assistant turn with no content cannot be replayed to either
+// wire dialect, so the loop leaves this in its place to keep history valid.
+const truncationMark = "[reply cut off at the output length limit]"
+
 // stream runs one model call, retrying a transient upstream failure with a
 // short backoff. A permanent error (a 400, a 401) returns on the first try.
 func (a *Agent) stream(ctx context.Context, req provider.Request, sink Sink) (*provider.Response, error) {
@@ -89,6 +106,9 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	// end-of-turn test check only pays for a git call when it might matter.
 	// nudged makes that check fire at most once, so it stays a nudge.
 	touched, nudged := false, false
+	// truncations counts replies cut off at the output ceiling, so the recovery
+	// nudge stays bounded and a model that never stops reasoning cannot spin.
+	truncations := 0
 	// The turn runs until the model ends it: a non-tool-use stop, or a tool_use
 	// stop with no tool blocks. The loop is not bounded by a fixed number of
 	// rounds, since an artificial limit kills a productive run mid-task and the
@@ -107,6 +127,22 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 			return turn, err
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleAssistant, Blocks: resp.Blocks})
+		if resp.StopReason == provider.StopMaxTokens {
+			// The reply hit the output ceiling: it was cut off mid-thought, not
+			// the model choosing to stop. A reasoning model can spend the whole
+			// budget on hidden reasoning and return no tool call, so ending here
+			// would abandon the task having done nothing. Keep the history
+			// replayable and nudge it to act, up to a bound.
+			if len(resp.Blocks) == 0 {
+				turn[len(turn)-1].Blocks = []provider.Block{provider.Text(truncationMark)}
+			}
+			if truncations < maxTruncationNudges {
+				truncations++
+				turn = append(turn, provider.UserText(truncationNudge))
+				continue
+			}
+			return turn, nil
+		}
 		if resp.StopReason != provider.StopToolUse {
 			if touched && !nudged && onlyTestsEdited(a.Workspace) {
 				// The model wants to stop after rewriting a test and changing

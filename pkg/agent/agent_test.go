@@ -262,6 +262,75 @@ func TestTurnNoNudgeWhenSourceChanged(t *testing.T) {
 	}
 }
 
+func truncationNudgeCount(turn []provider.Message) int {
+	n := 0
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == truncationNudge {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A reply that hits the output ceiling with no tool call is a cut-off, not the
+// model ending its turn. The loop must nudge it to act and keep going, so the
+// task is not abandoned mid-thought.
+func TestTurnRecoversFromTruncatedReply(t *testing.T) {
+	cutoff := &provider.Response{StopReason: provider.StopMaxTokens} // empty blocks: pure reasoning runaway
+	act := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t1", Name: "echo", Input: json.RawMessage(`{"s":"hi"}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	done := &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn}
+	p := &scriptProvider{responses: []*provider.Response{cutoff, act, done}}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil: a cut-off reply should recover, not fail", err)
+	}
+	if got := truncationNudgeCount(turn); got != 1 {
+		t.Fatalf("truncation nudge fired %d times, want 1", got)
+	}
+	// The empty cut-off assistant turn must be replayable, not a bare empty
+	// message that a provider would reject.
+	if turn[1].Role != provider.RoleAssistant || len(turn[1].Blocks) == 0 || turn[1].Blocks[0].Text != truncationMark {
+		t.Errorf("cut-off assistant turn = %+v, want the truncation placeholder", turn[1])
+	}
+	// The model went on to act and finish, so the tool ran and the turn ended
+	// on the model's own end-turn text.
+	last := turn[len(turn)-1]
+	if last.Blocks[0].Text != "done" {
+		t.Errorf("final message = %+v, want the recovered end-turn text", last)
+	}
+}
+
+// A model that never stops reasoning cannot spin the turn forever: after a
+// bounded number of nudges the turn ends.
+func TestTurnStopsAfterRepeatedTruncation(t *testing.T) {
+	cutoff := &provider.Response{StopReason: provider.StopMaxTokens}
+	responses := make([]*provider.Response, 0, maxTruncationNudges+1)
+	for range maxTruncationNudges + 1 {
+		responses = append(responses, cutoff)
+	}
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the turn should give up cleanly, not error", err)
+	}
+	// One first call, then one per nudge, then it stops without another.
+	if len(p.requests) != maxTruncationNudges+1 {
+		t.Errorf("model called %d times, want %d (first reply plus %d nudged retries)", len(p.requests), maxTruncationNudges+1, maxTruncationNudges)
+	}
+	if got := truncationNudgeCount(turn); got != maxTruncationNudges {
+		t.Errorf("truncation nudge fired %d times, want the bound of %d", got, maxTruncationNudges)
+	}
+}
+
 func TestTurnRunsUnbounded(t *testing.T) {
 	// A long multi-step task keeps going until the model ends its own turn.
 	// Drive far past the old fixed limit of 24 rounds to prove the loop no
