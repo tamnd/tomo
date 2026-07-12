@@ -32,15 +32,13 @@ type Gate interface {
 	Ingested(class tool.Class, isErr bool)
 }
 
-// Agent binds a provider, a toolset, and the loop knobs.
+// Agent binds a provider, a toolset, and the policy gate for the turn loop.
 type Agent struct {
-	Provider  provider.Provider
-	Model     string
-	System    string
-	Tools     *tool.Registry
-	Gate      Gate
-	MaxTokens int
-	MaxTurns  int
+	Provider provider.Provider
+	Model    string
+	System   string
+	Tools    *tool.Registry
+	Gate     Gate
 	// Workspace is the working directory of the file and shell tools. When it
 	// is a git repo, the loop uses it to notice a turn that rewrote a test
 	// instead of fixing the code and nudge the model back on track. Empty
@@ -87,21 +85,22 @@ func (a *Agent) stream(ctx context.Context, req provider.Request, sink Sink) (*p
 // the messages so far come back too, so a partial turn is not lost.
 func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provider.Message, sink Sink) ([]provider.Message, error) {
 	turn := []provider.Message{user}
-	maxTurns := a.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = 24
-	}
 	// touched records that the turn ran a tool that can change files, so the
 	// end-of-turn test check only pays for a git call when it might matter.
 	// nudged makes that check fire at most once, so it stays a nudge.
 	touched, nudged := false, false
-	for range maxTurns {
+	// The turn runs until the model ends it: a non-tool-use stop, or a tool_use
+	// stop with no tool blocks. The loop is not bounded by a fixed number of
+	// rounds, since an artificial limit kills a productive run mid-task and the
+	// model ends its own turn once the work is done. The loop still terminates on
+	// any provider error (a dropped stream, a 4xx, a filled context window),
+	// which surfaces as the turn's error rather than an infinite spin.
+	for {
 		req := provider.Request{
-			Model:     a.Model,
-			System:    a.System,
-			Messages:  concat(history, turn),
-			Tools:     a.Tools.Defs(),
-			MaxTokens: a.MaxTokens,
+			Model:    a.Model,
+			System:   a.System,
+			Messages: concat(history, turn),
+			Tools:    a.Tools.Defs(),
 		}
 		resp, err := a.stream(ctx, req, sink)
 		if err != nil {
@@ -137,7 +136,6 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 	}
-	return turn, fmt.Errorf("turn cap: %d model calls without an end_turn", maxTurns)
 }
 
 func (a *Agent) runTool(ctx context.Context, b provider.Block, sink Sink) (result string, isErr bool) {

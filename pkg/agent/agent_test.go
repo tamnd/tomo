@@ -77,7 +77,7 @@ func TestTurnRunsToolsUntilEndTurn(t *testing.T) {
 		},
 		{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn},
 	}}
-	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), MaxTurns: 5}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
 	sink := &recordSink{}
 
 	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), sink)
@@ -113,7 +113,7 @@ func TestTurnUnknownToolBecomesErrorResult(t *testing.T) {
 		},
 		{Blocks: []provider.Block{provider.Text("ok")}, StopReason: provider.StopEndTurn},
 	}}
-	a := &Agent{Provider: p, Model: "m", MaxTurns: 5}
+	a := &Agent{Provider: p, Model: "m"}
 
 	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
 	if err != nil {
@@ -148,7 +148,7 @@ func TestTurnGateDeniedBecomesErrorResult(t *testing.T) {
 		{Blocks: []provider.Block{provider.Text("ok, understood")}, StopReason: provider.StopEndTurn},
 	}}
 	gate := &denyGate{block: "echo"}
-	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), Gate: gate, MaxTurns: 5}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), Gate: gate}
 
 	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
 	if err != nil {
@@ -173,7 +173,7 @@ func TestTurnGateObservesRanTools(t *testing.T) {
 		{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn},
 	}}
 	gate := &denyGate{block: "nothing"}
-	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), Gate: gate, MaxTurns: 5}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), Gate: gate}
 
 	if _, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil); err != nil {
 		t.Fatal(err)
@@ -226,7 +226,6 @@ func TestTurnNudgesWhenOnlyTestsEdited(t *testing.T) {
 		Provider:  p,
 		Model:     "m",
 		Tools:     tool.NewRegistry(writeTool(dir, "test_identity.py", "def test_check():\n    assert check() == 1\n")),
-		MaxTurns:  10,
 		Workspace: dir,
 	}
 
@@ -251,7 +250,6 @@ func TestTurnNoNudgeWhenSourceChanged(t *testing.T) {
 		Provider:  p,
 		Model:     "m",
 		Tools:     tool.NewRegistry(writeTool(dir, "identity.py", "def check():\n    return 2\n")),
-		MaxTurns:  10,
 		Workspace: dir,
 	}
 
@@ -264,18 +262,33 @@ func TestTurnNoNudgeWhenSourceChanged(t *testing.T) {
 	}
 }
 
-func TestTurnCap(t *testing.T) {
-	// A provider that always wants another tool round hits the cap.
+func TestTurnRunsUnbounded(t *testing.T) {
+	// A long multi-step task keeps going until the model ends its own turn.
+	// Drive far past the old fixed limit of 24 rounds to prove the loop no
+	// longer cuts a productive run off mid-task.
+	const rounds = 40
 	loop := &provider.Response{
 		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(`{"s":"x"}`)}},
 		StopReason: provider.StopToolUse,
 	}
-	p := &scriptProvider{responses: []*provider.Response{loop, loop, loop}}
-	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), MaxTurns: 3}
+	responses := make([]*provider.Response, 0, rounds+1)
+	for range rounds {
+		responses = append(responses, loop)
+	}
+	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
 
-	_, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
-	if err == nil || !strings.Contains(err.Error(), "turn cap") {
-		t.Errorf("err = %v, want turn cap", err)
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the turn should run to the model's own end", err)
+	}
+	if len(p.requests) != rounds+1 {
+		t.Errorf("model called %d times, want %d (all %d tool rounds then the end)", len(p.requests), rounds+1, rounds)
+	}
+	last := turn[len(turn)-1]
+	if last.Role != provider.RoleAssistant || len(last.Blocks) == 0 || last.Blocks[0].Text != "done" {
+		t.Errorf("final message = %+v, want the model's end-turn text", last)
 	}
 }
 
@@ -335,7 +348,7 @@ func TestTurnKeepsPartialOnError(t *testing.T) {
 		},
 		// script exhausts on the second call
 	}}
-	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool()), MaxTurns: 5}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
 
 	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
 	if err == nil {

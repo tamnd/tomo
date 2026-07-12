@@ -133,9 +133,6 @@ func (o *OpenAI) Stream(ctx context.Context, req Request, emit func(Event)) (*Re
 		"stream":         true,
 		"stream_options": map[string]any{"include_usage": true},
 	}
-	if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
-	}
 	if len(req.Tools) > 0 {
 		type oaFunc struct {
 			Name        string          `json:"name"`

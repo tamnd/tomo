@@ -55,21 +55,7 @@ The name on the left is what `default_model` and `--model` reference before the 
 
 You can define as many providers as you like and switch between them per command with `--model`.
 
-## agent
-
-```yaml
-agent:
-  max_turns: 24
-```
-
-The loop knobs shared by every front end.
-
-| Key | Default | Meaning |
-|-----|---------|---------|
-| `max_tokens` | unset | Maximum tokens the model may generate per turn, hidden reasoning included. Unset sends no cap, so the model runs to its own limit. |
-| `max_turns` | `24` | Maximum tool-use rounds in a single turn before tomo stops looping. |
-
-`max_turns` set to zero falls back to its default; `max_tokens` left unset sends no cap.
+A turn runs its tool-use rounds until the model ends the turn on its own, so a long multi-step task runs to completion.
 
 ## policy
 
@@ -338,9 +324,6 @@ providers:
     type: openai
     base_url: http://gamingpc:8000/v1
     api_key: ${LOCAL_API_KEY}
-
-agent:
-  max_turns: 24
 
 # Reads and network run; writes and code execution ask first.
 # A per-tool rule wins over the class default.

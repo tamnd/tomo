@@ -43,7 +43,7 @@ func (f *fakeForce) Route(ch, chat, text string) (string, string) {
 }
 
 func (f *fakeForce) Agent(w string) (*agent.Agent, error) {
-	return &agent.Agent{Provider: f.providers[w], Model: "m", Tools: tool.NewRegistry(), MaxTurns: 8}, nil
+	return &agent.Agent{Provider: f.providers[w], Model: "m", Tools: tool.NewRegistry()}, nil
 }
 
 func (f *fakeForce) Engine(string) *policy.Engine    { return f.engine }

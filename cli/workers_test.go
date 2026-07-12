@@ -80,7 +80,6 @@ func testConfig(t *testing.T) *config.Config {
 	return &config.Config{
 		DefaultModel: "anthropic/claude-fable-5",
 		Providers:    map[string]config.Provider{"anthropic": {Type: "anthropic", APIKey: "test"}},
-		Agent:        config.Agent{MaxTokens: 1024, MaxTurns: 8},
 		Policy:       config.Policy{Read: "allow"},
 		DataDir:      t.TempDir(),
 	}

@@ -19,18 +19,11 @@ type Provider struct {
 	BaseURL string `yaml:"base_url"`
 }
 
-// Agent holds the loop knobs.
-type Agent struct {
-	MaxTokens int `yaml:"max_tokens"`
-	MaxTurns  int `yaml:"max_turns"`
-}
-
 // Config is the whole file. Policy is left as a raw map so pkg/config need
 // not import pkg/policy; the cli decodes it into policy.Config.
 type Config struct {
 	DefaultModel string              `yaml:"default_model"`
 	Providers    map[string]Provider `yaml:"providers"`
-	Agent        Agent               `yaml:"agent"`
 	Policy       Policy              `yaml:"policy"`
 	Sandbox      string              `yaml:"sandbox"`
 	Channels     Channels            `yaml:"channels"`
@@ -156,15 +149,6 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	// max_tokens is left unset by default. A fixed cap is a guess, and on a
-	// reasoning model a low one truncates the reply or the tool call once the
-	// hidden reasoning has eaten the budget. Zero means "send no cap": the
-	// OpenAI-style providers omit the field so the model runs to its own limit,
-	// and the Anthropic provider, whose API requires the field, fills its own
-	// fallback. Set max_tokens in the config to put a ceiling back.
-	if c.Agent.MaxTurns == 0 {
-		c.Agent.MaxTurns = 24
-	}
 	if c.DataDir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			c.DataDir = filepath.Join(home, ".tomo")

@@ -68,9 +68,8 @@ func TestAnthropicStream(t *testing.T) {
 	var streamed strings.Builder
 	var toolEvents []string
 	resp, err := p.Stream(context.Background(), Request{
-		Model:     "claude-test",
-		System:    "be nice",
-		MaxTokens: 100,
+		Model:  "claude-test",
+		System: "be nice",
 		Messages: []Message{
 			UserText("check uptime"),
 			{Role: RoleAssistant, Blocks: []Block{{Type: BlockToolUse, ID: "t0", Name: "shell", Input: json.RawMessage(`{"command":"ls"}`)}}},
@@ -129,38 +128,27 @@ func TestAnthropicStream(t *testing.T) {
 	}
 }
 
-// Anthropic requires max_tokens, so an unset budget falls back to a safe
-// default while an explicit one passes through unchanged.
-func TestAnthropicMaxTokensFallback(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		req  int
-		want float64
-	}{
-		{"unset", 0, defaultAnthropicMaxTokens},
-		{"explicit", 500, 500},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var gotBody map[string]any
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				raw, _ := io.ReadAll(r.Body)
-				_ = json.Unmarshal(raw, &gotBody)
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(w, anthropicFixture)
-			}))
-			defer srv.Close()
+// The Messages API rejects a call without the output-ceiling field, so the
+// provider always sends the value every current Claude model accepts.
+func TestAnthropicSendsRequiredOutputCeiling(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, anthropicFixture)
+	}))
+	defer srv.Close()
 
-			p := &Anthropic{APIKey: "sk-test", BaseURL: srv.URL}
-			_, err := p.Stream(context.Background(), Request{
-				Model: "claude-test", MaxTokens: tc.req, Messages: []Message{UserText("hi")},
-			}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if gotBody["max_tokens"] != tc.want {
-				t.Errorf("max_tokens = %v, want %v", gotBody["max_tokens"], tc.want)
-			}
-		})
+	p := &Anthropic{APIKey: "sk-test", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), Request{
+		Model: "claude-test", Messages: []Message{UserText("hi")},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["max_tokens"] != float64(anthropicOutputCeiling) {
+		t.Errorf("max_tokens = %v, want %v", gotBody["max_tokens"], anthropicOutputCeiling)
 	}
 }
 
@@ -171,7 +159,7 @@ func TestAnthropicHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	p := &Anthropic{APIKey: "nope", BaseURL: srv.URL}
-	_, err := p.Stream(context.Background(), Request{Model: "m", MaxTokens: 10, Messages: []Message{UserText("hi")}}, nil)
+	_, err := p.Stream(context.Background(), Request{Model: "m", Messages: []Message{UserText("hi")}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "bad key") {
 		t.Errorf("err = %v, want the server message", err)
 	}
