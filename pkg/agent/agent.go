@@ -41,6 +41,11 @@ type Agent struct {
 	Gate      Gate
 	MaxTokens int
 	MaxTurns  int
+	// Workspace is the working directory of the file and shell tools. When it
+	// is a git repo, the loop uses it to notice a turn that rewrote a test
+	// instead of fixing the code and nudge the model back on track. Empty
+	// disables that check.
+	Workspace string
 }
 
 // maxToolResult keeps one tool result from flooding the context window.
@@ -86,6 +91,10 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	if maxTurns <= 0 {
 		maxTurns = 24
 	}
+	// touched records that the turn ran a tool that can change files, so the
+	// end-of-turn test check only pays for a git call when it might matter.
+	// nudged makes that check fire at most once, so it stays a nudge.
+	touched, nudged := false, false
 	for range maxTurns {
 		req := provider.Request{
 			Model:     a.Model,
@@ -100,6 +109,13 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleAssistant, Blocks: resp.Blocks})
 		if resp.StopReason != provider.StopToolUse {
+			if touched && !nudged && onlyTestsEdited(a.Workspace) {
+				// The model wants to stop after rewriting a test and changing
+				// no source. Feed the nudge back once and let it try again.
+				nudged = true
+				turn = append(turn, provider.UserText(testNudge))
+				continue
+			}
 			return turn, nil
 		}
 
@@ -107,6 +123,9 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		for _, b := range resp.Blocks {
 			if b.Type != provider.BlockToolUse {
 				continue
+			}
+			if t, ok := a.Tools.Get(b.Name); ok && (t.Class == tool.ClassWrite || t.Class == tool.ClassExec) {
+				touched = true
 			}
 			out, isErr := a.runTool(ctx, b, sink)
 			results = append(results, provider.Block{Type: provider.BlockToolResult, ToolID: b.ID, Content: out, IsError: isErr})

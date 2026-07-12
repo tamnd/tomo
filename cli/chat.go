@@ -167,6 +167,7 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 		Gate:      guard,
 		MaxTokens: cfg.Agent.MaxTokens,
 		MaxTurns:  cfg.Agent.MaxTurns,
+		Workspace: workspace,
 	}
 	return a, name + "/" + modelID, nil
 }
