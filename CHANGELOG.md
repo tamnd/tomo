@@ -4,8 +4,32 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+Sharper tools for real codebases: a code search primitive, a surgical file edit,
+and hard caps on how much any tool can hand back, so the agent works a large repo
+without drowning its own context.
+
+### Added
+
+- A `grep` tool searches the codebase. With a pattern it returns matching lines as
+  `path:line: text`; with no pattern it lists files, optionally filtered by a
+  glob, which is how you find files by name. It runs ripgrep when it is on the
+  path (the speed and match quality every serious agent gets from rg) and falls
+  back to a bounded pure-Go walk when rg is absent, so a plain single-binary
+  install still searches. Results are capped.
+- An `edit` tool changes a file in place by replacing an exact, unique snippet, so
+  a one-line fix in a thousand-line file is one small edit instead of rewriting
+  the whole file. A non-unique or missing match is a clear error, not a silent
+  misedit.
+
 ### Changed
 
+- The `shell`, `read_file`, and `write_file` tools are renamed `bash`, `read`, and
+  `write`, matching the names models are trained on so the agent reaches for them
+  more reliably. Update any per-tool `rules` in your config to the new names.
+- Every tool's output is now capped. `bash` clamps combined output to a head and
+  tail with the middle elided, `read` takes `offset` and `limit` to page through a
+  large file and truncates over-long lines, and a search never floods the context.
+  A tool that trims its output says so and points at how to see the rest.
 - The agent works in fewer tool calls. The system prompt now tells it not to
   re-read a file it just wrote or repeat a check that already passed, and to end
   the turn once its test or build is green, so a solved task stops looping and

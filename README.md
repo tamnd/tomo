@@ -117,7 +117,7 @@ cli/         the cobra command tree, flags, and version reporting
 pkg/agent/   the turn loop: model call, tool dispatch, policy check
 pkg/policy/  the allow/ask/deny gate and the taint tracking
 pkg/channel/ Telegram, Discord, Slack, iMessage, and the local web chat
-pkg/tool/    the built-in tool surface: shell, files, fetch, memory
+pkg/tool/    the built-in tool surface: bash, files, grep, edit, fetch, memory
 pkg/memory/  the markdown memory store and its curator
 pkg/schedule/ cron-style scheduled prompts and the heartbeat
 pkg/mcp/     MCP client (attach servers) and MCP server (serve tomo's tools)

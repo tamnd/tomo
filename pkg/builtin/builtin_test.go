@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,12 +27,14 @@ func find(t *testing.T, name string) tool.Tool {
 
 func TestClassesAreDeclared(t *testing.T) {
 	want := map[string]tool.Class{
-		"shell":      tool.ClassExec,
-		"read_file":  tool.ClassRead,
-		"write_file": tool.ClassWrite,
-		"fetch":      tool.ClassNet,
-		"time":       tool.ClassRead,
-		"plan":       tool.ClassRead,
+		"bash":  tool.ClassExec,
+		"read":  tool.ClassRead,
+		"write": tool.ClassWrite,
+		"grep":  tool.ClassRead,
+		"edit":  tool.ClassWrite,
+		"fetch": tool.ClassNet,
+		"time":  tool.ClassRead,
+		"plan":  tool.ClassRead,
 	}
 	for _, tl := range All(nil, "") {
 		if want[tl.Name] != tl.Class {
@@ -41,7 +44,7 @@ func TestClassesAreDeclared(t *testing.T) {
 }
 
 func TestShellRunsAndTimesOut(t *testing.T) {
-	sh := find(t, "shell")
+	sh := find(t, "bash")
 	out, err := sh.Run(context.Background(), json.RawMessage(`{"command":"echo hello"}`))
 	if err != nil || !strings.Contains(out, "hello") {
 		t.Fatalf("echo: %q %v", out, err)
@@ -56,18 +59,72 @@ func TestReadWriteRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "note.txt")
 
-	wr := find(t, "write_file")
+	wr := find(t, "write")
 	out, err := wr.Run(context.Background(), mustJSON(map[string]string{"path": path, "content": "hi there"}))
 	if err != nil || !strings.Contains(out, "wrote") {
 		t.Fatalf("write: %q %v", out, err)
 	}
-	rd := find(t, "read_file")
+	rd := find(t, "read")
 	got, err := rd.Run(context.Background(), mustJSON(map[string]string{"path": path}))
 	if err != nil || got != "hi there" {
 		t.Errorf("read: %q %v", got, err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("file not created: %v", err)
+	}
+}
+
+func TestReadRangeAndCap(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	path := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rd := readFileTool(dir)
+	out, err := rd.Run(context.Background(), mustJSON(map[string]any{"path": "big.txt", "offset": 10, "limit": 5}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "lines 10-14 of 101") {
+		t.Errorf("missing range note: %q", out)
+	}
+	if !strings.Contains(out, "line 10") || !strings.Contains(out, "line 14") {
+		t.Errorf("wrong window: %q", out)
+	}
+	if strings.Contains(out, "line 15") || strings.Contains(out, "line 9\n") {
+		t.Errorf("window leaked neighbors: %q", out)
+	}
+}
+
+func TestReadRejectsBinary(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bin")
+	if err := os.WriteFile(path, []byte{'a', 0, 'b'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rd := readFileTool(dir)
+	_, err := rd.Run(context.Background(), mustJSON(map[string]any{"path": "bin"}))
+	if err == nil || !strings.Contains(err.Error(), "binary") {
+		t.Errorf("expected binary rejection, got %v", err)
+	}
+}
+
+func TestShellClampsHugeOutput(t *testing.T) {
+	sh := find(t, "bash")
+	// yes-style loop far exceeds maxOutputBytes; output must come back clamped.
+	out, err := sh.Run(context.Background(), json.RawMessage(`{"command":"for i in $(seq 1 200000); do echo lineoftext; done"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) > maxOutputBytes+512 {
+		t.Errorf("output not clamped: %d bytes", len(out))
+	}
+	if !strings.Contains(out, "elided") {
+		t.Errorf("missing elision notice: %q", out[len(out)-200:])
 	}
 }
 

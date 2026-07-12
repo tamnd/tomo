@@ -40,8 +40,8 @@ policy:
   write: ask
   exec: ask
   rules:
-    # shell: deny
-    # write_file: allow
+    # bash: deny
+    # write: allow
 
 # The gate decides whether a command may run; the sandbox decides how much it
 # can touch once it does. Off by default (none), so a plain install runs shell

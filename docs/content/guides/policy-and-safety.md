@@ -53,11 +53,11 @@ A rule is your considered choice, so it wins over everything else, the class def
 ```yaml
 policy:
   rules:
-    shell: deny          # never run shell, whatever the class says
-    write_file: allow     # trust file writes without a prompt
+    bash: deny           # never run shell, whatever the class says
+    write: allow          # trust file writes without a prompt
 ```
 
-Denying `shell` outright is a common and sensible starting point: it takes the sharpest tool off the table entirely while leaving the rest of the agent fully useful.
+Denying `bash` outright is a common and sensible starting point: it takes the sharpest tool off the table entirely while leaving the rest of the agent fully useful.
 
 ## Taint: why fetched text cannot drive your shell
 
