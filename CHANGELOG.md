@@ -45,6 +45,12 @@ without drowning its own context.
 
 ### Fixed
 
+- A reply cut off at the model's output limit no longer ends the turn. A model
+  that reasons at length can spend its whole output budget on hidden reasoning
+  and come back with a length stop and no tool call; the turn used to read that
+  as the model choosing to stop and gave up having done nothing. It now nudges
+  the model to take a concrete step and keeps going, a bounded number of times so
+  a model that never stops reasoning cannot spin forever.
 - A transient upstream failure no longer sinks a whole turn. When a gateway drops
   a completion mid-stream, it either sends an error payload as an SSE data line or
   cuts the body short; both used to unmarshal to an empty, successful-looking
