@@ -49,6 +49,11 @@ func newRoot() *cobra.Command {
 		},
 	}
 	root.PersistentFlags().String("config", "", "config file (default ~/.tomo/config.yaml)")
+	root.PersistentFlags().Bool("yolo", false, "auto-approve every action, never prompt (fully autonomous, use only in a sandbox)")
+	// Same behaviour under the name Claude Code users reach for. Hidden so help
+	// shows one canonical flag, but the muscle-memory name still works.
+	root.PersistentFlags().Bool("dangerously-skip-permissions", false, "alias for --yolo")
+	_ = root.PersistentFlags().MarkHidden("dangerously-skip-permissions")
 	root.Flags().StringVarP(&prompt, "prompt", "p", "", "run a single prompt non-interactively and exit")
 	root.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
 	root.AddCommand(newChatCmd())

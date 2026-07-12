@@ -20,6 +20,12 @@ without drowning its own context.
   a one-line fix in a thousand-line file is one small edit instead of rewriting
   the whole file. A non-unique or missing match is a clear error, not a silent
   misedit.
+- A `--yolo` flag runs tomo fully autonomous: every action the policy gate would
+  stop to ask about is auto-approved, which is how an agent works unattended in a
+  sandbox. It is off by default, so tomo stays safe out of the box, and it never
+  overrides an explicit `deny` rule, only the asks. `--dangerously-skip-permissions`
+  is a hidden alias for anyone reaching for the name Claude Code uses. Without it,
+  a headless `tomo -p` run still declines what it cannot ask a human about.
 
 ### Changed
 

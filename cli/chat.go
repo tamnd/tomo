@@ -39,7 +39,7 @@ func newChatCmd() *cobra.Command {
 				return err
 			}
 			tio := newTermIO(os.Stdin, cmd.OutOrStdout())
-			guard, closeAudit, err := buildGuard(cfg, tio)
+			guard, closeAudit, err := buildGuard(cfg, approverFor(cmd, tio, cmd.ErrOrStderr()))
 			if err != nil {
 				return err
 			}
@@ -87,7 +87,7 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 		return err
 	}
 	tio := newTermIO(os.Stdin, cmd.OutOrStdout())
-	guard, closeAudit, err := buildGuard(cfg, tio)
+	guard, closeAudit, err := buildGuard(cfg, approverFor(cmd, tio, cmd.ErrOrStderr()))
 	if err != nil {
 		return err
 	}
