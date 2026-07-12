@@ -168,12 +168,18 @@ func (o *OpenAI) Stream(ctx context.Context, req Request, emit func(Event)) (*Re
 
 	resp, err := o.client().Do(hr)
 	if err != nil {
-		return nil, err
+		// A dial or connection-reset error before any status is a network
+		// hiccup, worth a retry.
+		return nil, asTransient(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("openai: %s: %s", resp.Status, strings.TrimSpace(string(msg)))
+		e := fmt.Errorf("openai: %s: %s", resp.Status, strings.TrimSpace(string(msg)))
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return nil, asTransient(e)
+		}
+		return nil, e
 	}
 	return parseOpenAIStream(resp.Body, emit)
 }
@@ -197,6 +203,15 @@ type oaChunk struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 	} `json:"usage"`
+	// Error carries an upstream failure delivered mid-stream. A gateway that
+	// drops a completion sends a data line like
+	// {"error":{"message":"Streaming response failed","type":"server_error"}}
+	// rather than closing cleanly, and without this field it would unmarshal to
+	// an empty chunk and the call would look like a blank, successful reply.
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+	} `json:"error"`
 }
 
 func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
@@ -213,6 +228,9 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 		var ch oaChunk
 		if err := json.Unmarshal(data, &ch); err != nil {
 			return fmt.Errorf("openai: bad stream payload: %w", err)
+		}
+		if ch.Error != nil {
+			return fmt.Errorf("openai: stream error: %s", strings.TrimSpace(ch.Error.Message))
 		}
 		if ch.Usage != nil {
 			out.Usage.InputTokens = ch.Usage.PromptTokens
@@ -257,7 +275,9 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		// A mid-stream error payload or a body that was cut short both land
+		// here; both are the upstream failing a completion, so retry.
+		return nil, asTransient(err)
 	}
 
 	if text.Len() > 0 {

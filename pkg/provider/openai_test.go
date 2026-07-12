@@ -151,6 +151,64 @@ func TestOpenAIStreamTruncatedToolCall(t *testing.T) {
 	}
 }
 
+// A gateway that drops a completion delivers an error payload as an SSE data
+// line rather than closing cleanly. Without surfacing it, the call would look
+// like a blank successful reply and the turn would end having done nothing.
+func TestOpenAIStreamErrorPayload(t *testing.T) {
+	const fixture = `data: {"choices":[{"delta":{"content":"thinking"},"finish_reason":null}]}
+
+data: {"error":{"message":"Streaming response failed","type":"server_error","code":"server_error"}}
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, fixture)
+	}))
+	defer srv.Close()
+
+	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+	_, err := p.Stream(context.Background(), Request{Model: "weak", Messages: []Message{UserText("hi")}}, nil)
+	if err == nil {
+		t.Fatal("want an error for a mid-stream error payload, got nil")
+	}
+	if !Transient(err) {
+		t.Errorf("stream error should be transient: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Streaming response failed") {
+		t.Errorf("error should carry the upstream message: %v", err)
+	}
+}
+
+// A 5xx is a temporary upstream fault and must be retryable; a 400 is a
+// permanent request problem and must not be.
+func TestOpenAIStreamStatusTransient(t *testing.T) {
+	cases := []struct {
+		code      int
+		transient bool
+	}{
+		{http.StatusInternalServerError, true},
+		{http.StatusBadGateway, true},
+		{http.StatusTooManyRequests, true},
+		{http.StatusBadRequest, false},
+		{http.StatusUnauthorized, false},
+	}
+	for _, c := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(c.code)
+			_, _ = io.WriteString(w, `{"error":"nope"}`)
+		}))
+		p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+		_, err := p.Stream(context.Background(), Request{Model: "weak", Messages: []Message{UserText("hi")}}, nil)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("status %d: want error", c.code)
+		}
+		if got := Transient(err); got != c.transient {
+			t.Errorf("status %d: Transient = %v, want %v (%v)", c.code, got, c.transient, err)
+		}
+	}
+}
+
 // Even if an invalid tool-call block is already in history (an older session,
 // say), it must never be replayed to the provider verbatim.
 func TestOaMessagesInvalidToolArgsGuard(t *testing.T) {

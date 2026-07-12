@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/tool"
@@ -45,6 +46,37 @@ type Agent struct {
 // maxToolResult keeps one tool result from flooding the context window.
 const maxToolResult = 100_000
 
+// maxCallRetries is how many extra times a single model call is retried when
+// the upstream fails it transiently: a dropped or failed stream, a 5xx, a 429,
+// or a network hiccup. A flaky gateway that fails one completion in a while
+// should not sink a whole turn, and re-issuing the same request re-sends the
+// same history, so the retry is cheap next to restarting the task.
+const maxCallRetries = 3
+
+// stream runs one model call, retrying a transient upstream failure with a
+// short backoff. A permanent error (a 400, a 401) returns on the first try.
+func (a *Agent) stream(ctx context.Context, req provider.Request, sink Sink) (*provider.Response, error) {
+	var resp *provider.Response
+	var err error
+	for attempt := 0; ; attempt++ {
+		resp, err = a.Provider.Stream(ctx, req, func(ev provider.Event) {
+			if sink != nil && ev.Type == provider.EventText {
+				sink.Text(ev.Text)
+			}
+		})
+		if err == nil || attempt >= maxCallRetries || !provider.Transient(err) {
+			return resp, err
+		}
+		// Back off a little before retrying: 250ms, 500ms, 1s.
+		delay := 250 * time.Millisecond << attempt
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
 // Turn runs one user turn to completion and returns every message it
 // generated, the user message first, so the caller can persist them. On error
 // the messages so far come back too, so a partial turn is not lost.
@@ -62,11 +94,7 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 			Tools:     a.Tools.Defs(),
 			MaxTokens: a.MaxTokens,
 		}
-		resp, err := a.Provider.Stream(ctx, req, func(ev provider.Event) {
-			if sink != nil && ev.Type == provider.EventText {
-				sink.Text(ev.Text)
-			}
-		})
+		resp, err := a.stream(ctx, req, sink)
 		if err != nil {
 			return turn, err
 		}

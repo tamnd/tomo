@@ -4,6 +4,23 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+### Changed
+
+- The agent works in fewer tool calls. The system prompt now tells it not to
+  re-read a file it just wrote or repeat a check that already passed, and to end
+  the turn once its test or build is green, so a solved task stops looping and
+  spends fewer model calls.
+
+### Fixed
+
+- A transient upstream failure no longer sinks a whole turn. When a gateway drops
+  a completion mid-stream, it either sends an error payload as an SSE data line or
+  cuts the body short; both used to unmarshal to an empty, successful-looking
+  reply, so the turn ended having done nothing and the whole task had to be redone.
+  The agent now surfaces the mid-stream error, marks dropped streams, 5xx, 429,
+  and network errors as transient, and retries the model call a few times with a
+  short backoff. A permanent error, a 400 or a 401, still fails on the first try.
+
 ## v0.2.4
 
 Finishes the job on the first try more often: the agent runs the tests before it

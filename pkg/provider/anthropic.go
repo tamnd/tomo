@@ -147,12 +147,16 @@ func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) (
 
 	resp, err := a.client().Do(hr)
 	if err != nil {
-		return nil, err
+		return nil, asTransient(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("anthropic: %s: %s", resp.Status, strings.TrimSpace(string(msg)))
+		e := fmt.Errorf("anthropic: %s: %s", resp.Status, strings.TrimSpace(string(msg)))
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return nil, asTransient(e)
+		}
+		return nil, e
 	}
 	return parseAnthropicStream(resp.Body, emit)
 }
@@ -248,7 +252,8 @@ func parseAnthropicStream(r io.Reader, emit func(Event)) (*Response, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		// A body cut short mid-stream is the upstream failing a completion.
+		return nil, asTransient(err)
 	}
 	// Drop empty placeholders from unknown block kinds.
 	for _, b := range blocks {
