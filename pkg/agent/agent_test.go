@@ -183,6 +183,87 @@ func TestTurnGateObservesRanTools(t *testing.T) {
 	}
 }
 
+// writeTool overwrites a fixed file under dir, so a scripted turn can dirty the
+// git workspace exactly the way the model would.
+func writeTool(dir, rel, body string) tool.Tool {
+	return tool.Tool{
+		Name:   "write",
+		Class:  tool.ClassWrite,
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Run: func(_ context.Context, _ json.RawMessage) (string, error) {
+			write(nil, dir, rel, body) // nil *testing.T: paths are known-good here
+			return "wrote " + rel, nil
+		},
+	}
+}
+
+func nudgeCount(turn []provider.Message) int {
+	n := 0
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == testNudge {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func TestTurnNudgesWhenOnlyTestsEdited(t *testing.T) {
+	dir := gitRepo(t, map[string]string{
+		"identity.py":      "def check():\n    return 1\n",
+		"test_identity.py": "def test_check():\n    assert check() == 2\n",
+	})
+	call := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "write", Input: json.RawMessage(`{}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	end := &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn}
+	// Round 1 rewrites the test; the model then tries to stop, still tries to
+	// stop after the nudge, so the nudge must land exactly once.
+	p := &scriptProvider{responses: []*provider.Response{call, end, end}}
+	a := &Agent{
+		Provider:  p,
+		Model:     "m",
+		Tools:     tool.NewRegistry(writeTool(dir, "test_identity.py", "def test_check():\n    assert check() == 1\n")),
+		MaxTurns:  10,
+		Workspace: dir,
+	}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("fix it"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nudgeCount(turn); got != 1 {
+		t.Fatalf("nudge fired %d times, want exactly 1", got)
+	}
+}
+
+func TestTurnNoNudgeWhenSourceChanged(t *testing.T) {
+	dir := gitRepo(t, map[string]string{"identity.py": "def check():\n    return 1\n"})
+	call := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "write", Input: json.RawMessage(`{}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	end := &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn}
+	p := &scriptProvider{responses: []*provider.Response{call, end}}
+	a := &Agent{
+		Provider:  p,
+		Model:     "m",
+		Tools:     tool.NewRegistry(writeTool(dir, "identity.py", "def check():\n    return 2\n")),
+		MaxTurns:  10,
+		Workspace: dir,
+	}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("fix it"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nudgeCount(turn); got != 0 {
+		t.Fatalf("nudge fired %d times, want 0 when source changed", got)
+	}
+}
+
 func TestTurnCap(t *testing.T) {
 	// A provider that always wants another tool round hits the cap.
 	loop := &provider.Response{
