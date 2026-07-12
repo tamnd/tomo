@@ -37,6 +37,17 @@ without drowning its own context.
 - A turn now runs its tool-use rounds until the model ends the turn on its own.
   A fixed round limit cut long multi-step tasks off before they finished; a turn
   ends when the model stops calling tools or an upstream error breaks the loop.
+- A turn that stops making progress no longer spins forever. The agent watches
+  for rounds where every tool call repeats one it already made; a burst of those
+  earns one nudge to stop retrying and make the fix, and if the repetition keeps
+  up the turn ends. It bounds the spin, not the length: any new distinct call
+  resets the count, so a long task doing real work is never cut short. This is
+  what keeps a weaker model from looping the same command dozens of times when a
+  broken environment makes every attempt fail the same way.
+- The system prompt now tells the agent to diagnose before it changes code: read
+  the failing test or the real error first, make the smallest fix for that cause,
+  and do not build one reproduction after another or rerun a command whose output
+  it already has.
 - The `agent` config section is gone, along with its two knobs. The `max_tokens`
   and `max_turns` settings were removed: the model runs to its own output limit
   and the turn to its own end, which is how the agent already behaved with them
