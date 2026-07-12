@@ -21,13 +21,13 @@ import (
 )
 
 // All returns the full builtin set, rooted at workspace: the file tools take a
-// relative path as relative to it, and the shell tool runs there through the
+// relative path as relative to it, and the bash tool runs there through the
 // given sandbox. A nil sandbox means unconfined, the same as passing the none
 // mode, so callers that do not care about confinement can pass nil. An empty
 // workspace anchors relative paths to the process working directory, which is
 // the behavior a plain install has always had.
 func All(exec sandbox.Sandbox, workspace string) []tool.Tool {
-	return []tool.Tool{shellTool(exec, workspace), readFileTool(workspace), writeFileTool(workspace), fetchTool(), timeTool(), planTool()}
+	return []tool.Tool{shellTool(exec, workspace), readFileTool(workspace), grepTool(exec, workspace), writeFileTool(workspace), editTool(workspace), fetchTool(), timeTool(), planTool()}
 }
 
 func shellTool(box sandbox.Sandbox, workspace string) tool.Tool {
@@ -42,7 +42,7 @@ func shellTool(box sandbox.Sandbox, workspace string) tool.Tool {
 		desc += " It runs inside a " + box.Name() + " sandbox: the filesystem and network are restricted, so a command may be refused access the kernel enforces."
 	}
 	return tool.Tool{
-		Name:        "shell",
+		Name:        "bash",
 		Description: desc,
 		Class:       tool.ClassExec,
 		Schema: json.RawMessage(`{
@@ -70,33 +70,45 @@ func shellTool(box sandbox.Sandbox, workspace string) tool.Tool {
 			cctx, cancel := context.WithTimeout(ctx, time.Duration(v.Timeout)*time.Second)
 			defer cancel()
 			out, err := box.Run(cctx, []string{"sh", "-c", v.Command})
+			hint := "the output was truncated; narrow it, e.g. pipe through grep or head"
 			if cctx.Err() == context.DeadlineExceeded {
-				return out, fmt.Errorf("command timed out after %ds", v.Timeout)
+				return clamp(out, hint), fmt.Errorf("command timed out after %ds", v.Timeout)
 			}
 			if err != nil {
-				return out, fmt.Errorf("%s: %w", trim(out, 500), err)
+				return clamp(out, hint), fmt.Errorf("%s: %w", trim(out, 500), err)
 			}
 			if len(out) == 0 {
 				return "(no output)", nil
 			}
-			return out, nil
+			return clamp(out, hint), nil
 		},
 	}
 }
 
+// defaultReadLines caps a read that asked for no range, so opening a large file
+// returns its head rather than its whole self. The model reads on with offset.
+const defaultReadLines = 2000
+
 func readFileTool(workspace string) tool.Tool {
 	return tool.Tool{
-		Name:        "read_file",
-		Description: "Read a UTF-8 text file from disk and return its contents. A relative path is taken relative to your working directory.",
-		Class:       tool.ClassRead,
+		Name: "read",
+		Description: "Read a UTF-8 text file and return its contents. A relative path is taken relative to your working directory. " +
+			"For a large file, pass `offset` (1-based first line) and `limit` (line count) to read a window; without them only the first lines are returned.",
+		Class: tool.ClassRead,
 		Schema: json.RawMessage(`{
 			"type": "object",
-			"properties": {"path": {"type": "string"}},
+			"properties": {
+				"path": {"type": "string"},
+				"offset": {"type": "integer", "description": "1-based line to start at (default 1)"},
+				"limit": {"type": "integer", "description": "number of lines to return (default 2000)"}
+			},
 			"required": ["path"]
 		}`),
 		Run: func(_ context.Context, input json.RawMessage) (string, error) {
 			var v struct {
-				Path string `json:"path"`
+				Path   string `json:"path"`
+				Offset int    `json:"offset"`
+				Limit  int    `json:"limit"`
 			}
 			if err := json.Unmarshal(input, &v); err != nil {
 				return "", err
@@ -105,14 +117,36 @@ func readFileTool(workspace string) tool.Tool {
 			if err != nil {
 				return "", err
 			}
-			return string(raw), nil
+			if looksBinary(raw) {
+				return "", fmt.Errorf("%s looks like a binary file; not shown", v.Path)
+			}
+			lines := strings.Split(string(raw), "\n")
+			total := len(lines)
+			start := 0
+			if v.Offset > 1 {
+				start = min(v.Offset-1, total)
+			}
+			limit := v.Limit
+			if limit <= 0 {
+				limit = defaultReadLines
+			}
+			end := min(start+limit, total)
+			window := append([]string(nil), lines[start:end]...)
+			for i := range window {
+				window[i] = truncLine(window[i])
+			}
+			body := strings.Join(window, "\n")
+			if start > 0 || end < total {
+				body = fmt.Sprintf("[lines %d-%d of %d; pass offset and limit for more]\n", start+1, end, total) + body
+			}
+			return clamp(body, "read a smaller range with offset and limit"), nil
 		},
 	}
 }
 
 func writeFileTool(workspace string) tool.Tool {
 	return tool.Tool{
-		Name:        "write_file",
+		Name:        "write",
 		Description: "Write text to a file, creating parent directories and overwriting any existing file. A relative path is taken relative to your working directory.",
 		Class:       tool.ClassWrite,
 		Schema: json.RawMessage(`{
