@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -334,15 +335,16 @@ func TestTurnStopsAfterRepeatedTruncation(t *testing.T) {
 func TestTurnRunsUnbounded(t *testing.T) {
 	// A long multi-step task keeps going until the model ends its own turn.
 	// Drive far past the old fixed limit of 24 rounds to prove the loop no
-	// longer cuts a productive run off mid-task.
+	// longer cuts a productive run off mid-task. Each round does distinct work
+	// (a different tool input), which is what a real long task looks like, so
+	// the stall governor never fires: it targets repeated calls, not length.
 	const rounds = 40
-	loop := &provider.Response{
-		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(`{"s":"x"}`)}},
-		StopReason: provider.StopToolUse,
-	}
 	responses := make([]*provider.Response, 0, rounds+1)
-	for range rounds {
-		responses = append(responses, loop)
+	for i := range rounds {
+		responses = append(responses, &provider.Response{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(fmt.Sprintf(`{"s":"x%d"}`, i))}},
+			StopReason: provider.StopToolUse,
+		})
 	}
 	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
 	p := &scriptProvider{responses: responses}
@@ -358,6 +360,45 @@ func TestTurnRunsUnbounded(t *testing.T) {
 	last := turn[len(turn)-1]
 	if last.Role != provider.RoleAssistant || len(last.Blocks) == 0 || last.Blocks[0].Text != "done" {
 		t.Errorf("final message = %+v, want the model's end-turn text", last)
+	}
+}
+
+func TestTurnGovernsRepeatLoop(t *testing.T) {
+	// A turn that keeps making the same tool call without ever changing its
+	// input is spinning, not working. The governor lets it run a few rounds,
+	// nudges once, then ends the turn rather than burning tokens forever. The
+	// model here never ends on its own: only the governor stops it.
+	loop := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(`{"s":"same"}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	responses := make([]*provider.Response, 0, 64)
+	for range 64 {
+		responses = append(responses, loop)
+	}
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the governor should end the loop cleanly", err)
+	}
+	// First round is new, then stallLimit rounds of repeats end it: the model is
+	// called once per round up to and including the round that trips the limit.
+	if want := 1 + stallLimit; len(p.requests) != want {
+		t.Errorf("model called %d times, want %d (one new round plus %d stalled rounds)", len(p.requests), want, stallLimit)
+	}
+	// The convergence nudge should have been fed exactly once before the end.
+	var nudges int
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == stallNudgeText {
+				nudges++
+			}
+		}
+	}
+	if nudges != 1 {
+		t.Errorf("stall nudge fired %d times, want exactly 1", nudges)
 	}
 }
 

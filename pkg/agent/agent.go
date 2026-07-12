@@ -109,6 +109,12 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	// truncations counts replies cut off at the output ceiling, so the recovery
 	// nudge stays bounded and a model that never stops reasoning cannot spin.
 	truncations := 0
+	// seen holds every tool call the turn has made, and stall counts consecutive
+	// rounds that added nothing new to it. Together they let the governor tell a
+	// long productive run from a loop that only repeats itself. stallNudged keeps
+	// the convergence nudge to a single firing.
+	seen := map[string]bool{}
+	stall, stallNudged := 0, false
 	// The turn runs until the model ends it: a non-tool-use stop, or a tool_use
 	// stop with no tool blocks. The loop is not bounded by a fixed number of
 	// rounds, since an artificial limit kills a productive run mid-task and the
@@ -155,12 +161,19 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		}
 
 		var results []provider.Block
+		// roundNew flags that this round issued at least one tool call the turn
+		// had not made before. A round of only repeats is the loop standing still.
+		roundNew := false
 		for _, b := range resp.Blocks {
 			if b.Type != provider.BlockToolUse {
 				continue
 			}
 			if t, ok := a.Tools.Get(b.Name); ok && (t.Class == tool.ClassWrite || t.Class == tool.ClassExec) {
 				touched = true
+			}
+			if sig := callSig(b.Name, b.Input); !seen[sig] {
+				seen[sig] = true
+				roundNew = true
 			}
 			out, isErr := a.runTool(ctx, b, sink)
 			results = append(results, provider.Block{Type: provider.BlockToolResult, ToolID: b.ID, Content: out, IsError: isErr})
@@ -169,6 +182,24 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 			// A tool_use stop with no tool blocks is a provider quirk; end
 			// the turn rather than loop on nothing.
 			return turn, nil
+		}
+		// A round that did something new resets the stall; a round of pure
+		// repeats deepens it. When the loop has only repeated itself for
+		// stallLimit rounds running, it is spinning, not working: record the
+		// results it just got and end the turn. One round before that, feed a
+		// single nudge to break the spin without cutting a run that might recover.
+		if roundNew {
+			stall = 0
+		} else {
+			stall++
+		}
+		if stall >= stallLimit {
+			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
+			return turn, nil
+		}
+		if stall >= stallNudge && !stallNudged {
+			stallNudged = true
+			results = append(results, provider.Text(stallNudgeText))
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 	}
