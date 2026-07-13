@@ -58,7 +58,15 @@ const noEditNudge = 12
 // written nothing. Past it the turn is mining, not fixing, and more rounds only
 // burn budget the way that runaway did. It sits far above noEditNudge so a long
 // read-before-edit investigation gets its nudge and a fair chance to act first.
-const noEditLimit = 40
+//
+// The value is calibrated against the deepest real investigation in the captured
+// sweep, not guessed. One run read the source for 41 rounds before it made its
+// first edit at round 42, then wrote a correct fix: a productive turn that simply
+// looked long before it acted. A tighter bound would have cut it off two rounds
+// short of its own fix and turned a near miss into nothing. So the limit clears
+// that run with margin while staying far below the git-archaeology runaway, which
+// never edited across 130 rounds and is caught with room to spare either way.
+const noEditLimit = 56
 
 // noEditNudgeText redirects a turn that keeps investigating toward making the
 // change. It names the git-history trap directly, since a referenced issue or PR
