@@ -529,6 +529,103 @@ func TestTurnEndsRunawayChurn(t *testing.T) {
 	}
 }
 
+func sprawlNudgeCount(turn []provider.Message) int {
+	n := 0
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == sprawlNudgeText {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A turn that spreads its edits across many distinct files is nudged once to check
+// its blast radius. Each write targets a different path, so the distinct-file
+// signal climbs while the write volume stays under the churn nudge: only the
+// blast-radius guard should notice.
+func TestTurnNudgesWhenEditingManyFiles(t *testing.T) {
+	responses := make([]*provider.Response, 0, sprawlNudge+1)
+	for i := range sprawlNudge {
+		responses = append(responses, &provider.Response{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "save", Input: json.RawMessage(fmt.Sprintf(`{"path":"pkg/f%d.go"}`, i))}},
+			StopReason: provider.StopToolUse,
+		})
+	}
+	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sprawlNudgeCount(turn); got != 1 {
+		t.Fatalf("sprawl nudge fired %d times, want exactly 1", got)
+	}
+	// sprawlNudge distinct files sits under the churn nudge, so volume never fired:
+	// the two write signals are independent.
+	if got := churnNudgeCount(turn); got != 0 {
+		t.Errorf("churn nudge fired %d times, want 0 (volume stayed under its bound)", got)
+	}
+	// It is a nudge, not a limit: the turn still ended on the model's own choice.
+	if last := turn[len(turn)-1]; last.Blocks[0].Text != "done" {
+		t.Errorf("final message = %+v, want the model's own end after the nudge", last)
+	}
+}
+
+// The blast-radius guard watches spread, not volume, so a turn that refines a
+// single file many times must never trip it however many writes it makes. Here
+// every write lands in the same path with distinct content, so the churn guard
+// fires on the volume while the sprawl guard stays silent: proof the two signals
+// are orthogonal.
+func TestTurnNoSprawlNudgeWhenRefiningOneFile(t *testing.T) {
+	responses := make([]*provider.Response, 0, churnNudge+1)
+	for i := range churnNudge {
+		responses = append(responses, &provider.Response{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "save", Input: json.RawMessage(fmt.Sprintf(`{"path":"pkg/one.go","content":"v%d"}`, i))}},
+			StopReason: provider.StopToolUse,
+		})
+	}
+	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sprawlNudgeCount(turn); got != 0 {
+		t.Errorf("sprawl nudge fired %d times on a one-file turn, want 0", got)
+	}
+	if got := churnNudgeCount(turn); got != 1 {
+		t.Errorf("churn nudge fired %d times, want 1 (volume still tripped)", got)
+	}
+}
+
+func TestWrittenPath(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"edit and write name it path", `{"path":"pkg/a.go","old_string":"x","new_string":"y"}`, "pkg/a.go"},
+		{"content write", `{"path":"pkg/b.go","content":"hi"}`, "pkg/b.go"},
+		{"no path field", `{"s":"scratch"}`, ""},
+		{"empty path", `{"path":""}`, ""},
+		{"malformed input", `not json`, ""},
+		{"path not a string", `{"path":42}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := writtenPath(json.RawMessage(c.input)); got != c.want {
+				t.Errorf("writtenPath(%s) = %q, want %q", c.input, got, c.want)
+			}
+		})
+	}
+}
+
 func TestTurnGovernsRepeatLoop(t *testing.T) {
 	// A turn that keeps making the same tool call without ever changing its
 	// input is spinning, not working. The governor lets it run a few rounds,

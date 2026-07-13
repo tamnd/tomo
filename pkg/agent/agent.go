@@ -125,6 +125,13 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	// scratch scripts or re-editing the same file. churnNudged keeps that nudge to
 	// a single firing.
 	writes, churnNudged := 0, false
+	// files holds the distinct paths the turn has written, so the governor can catch
+	// a run that spreads its edits wide rather than converging on the file the bug
+	// points at. Volume (writes) and spread (len(files)) are different: a surgical
+	// run refining one file and a sprawling one touching many reach the same write
+	// count, so this second write signal is what tells them apart. sprawlNudged keeps
+	// that nudge to a single firing.
+	files, sprawlNudged := map[string]bool{}, false
 	// The turn runs until the model ends it: a non-tool-use stop, or a tool_use
 	// stop with no tool blocks. The loop is not bounded by a fixed number of
 	// rounds, since an artificial limit kills a productive run mid-task and the
@@ -187,6 +194,9 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 				if t.Class == tool.ClassWrite {
 					roundWrote = true
 					writes++
+					if p := writtenPath(b.Input); p != "" {
+						files[p] = true
+					}
 				}
 			}
 			if sig := callSig(b.Name, b.Input); !seen[sig] {
@@ -234,6 +244,14 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		if writes >= churnNudge && !churnNudged {
 			churnNudged = true
 			results = append(results, provider.Text(churnNudgeText))
+		}
+		// A turn that has written to many distinct files has spread its edit wide,
+		// which the write-volume nudge above cannot see. Nudge it once to justify the
+		// breadth or converge on the file the bug owns. It stays a nudge, never a
+		// limit, since a broad fix can be correct.
+		if len(files) >= sprawlNudge && !sprawlNudged {
+			sprawlNudged = true
+			results = append(results, provider.Text(sprawlNudgeText))
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 	}
