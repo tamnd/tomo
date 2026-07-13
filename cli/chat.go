@@ -135,7 +135,7 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 // run under, and which memory and skills dirs to read. The zero value plus a
 // model spec builds the default worker against the top-level dirs.
 type agentBuild struct {
-	engine    string // "agent" (default) or "cx", empty means the default engine
+	engine    string // "agent" (default), "cx", or "cx-offline"; empty means the default engine
 	persona   string // extra system-prompt lines, empty for the default worker
 	model     string // provider/model spec, empty means the config default
 	memoryDir string // empty means <data>/memory
@@ -170,23 +170,28 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 // the same way. Every other caller (serve's workforce, plan run, the MCP server)
 // stays on buildAgent and the concrete *agent.Agent it returns.
 func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool.Tool) (engine, string, error) {
-	if b.engine != "cx" {
+	if !isCX(b.engine) {
 		return buildAgent(cfg, b, guard, extra...)
 	}
 	parts, err := resolveParts(cfg, b, extra...)
 	if err != nil {
 		return nil, "", err
 	}
+	offline := b.engine == "cx-offline"
 	e := &cx.Engine{
 		Provider:  parts.provider,
 		Model:     parts.modelID,
-		System:    cx.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
+		System:    cx.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex, offline),
 		Tools:     parts.reg,
 		Gate:      guard,
 		Workspace: parts.workspace,
 	}
-	return e, parts.label + " · cx", nil
+	return e, parts.label + " · " + b.engine, nil
 }
+
+// isCX reports whether the engine spec selects the codex-style cx engine, in
+// either its default form or the offline (checked-out-tree-only) variant.
+func isCX(engine string) bool { return engine == "cx" || engine == "cx-offline" }
 
 // agentParts holds the resolved pieces both engines are assembled from: the
 // provider, the toolset (with cx's tool descriptions already applied when the
@@ -230,7 +235,7 @@ func resolveParts(cfg *config.Config, b agentBuild, extra ...tool.Tool) (agentPa
 		return agentParts{}, err
 	}
 	base := builtin.All(box, workspace)
-	if b.engine == "cx" {
+	if isCX(b.engine) {
 		base = cx.Retune(base)
 	}
 	reg := tool.NewRegistry(base...)
