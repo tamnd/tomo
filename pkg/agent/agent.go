@@ -120,6 +120,11 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	// (distinct calls every round, so the repeat guard stays quiet). A write
 	// resets it; noEditNudged keeps that nudge to a single firing.
 	sinceEdit, noEditNudged := 0, false
+	// writes counts every file the turn has written, so the governor can catch the
+	// opposite runaway: a turn that keeps editing but never converges, churning on
+	// scratch scripts or re-editing the same file. churnNudged keeps that nudge to
+	// a single firing.
+	writes, churnNudged := 0, false
 	// The turn runs until the model ends it: a non-tool-use stop, or a tool_use
 	// stop with no tool blocks. The loop is not bounded by a fixed number of
 	// rounds, since an artificial limit kills a productive run mid-task and the
@@ -181,6 +186,7 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 				}
 				if t.Class == tool.ClassWrite {
 					roundWrote = true
+					writes++
 				}
 			}
 			if sig := callSig(b.Name, b.Input); !seen[sig] {
@@ -213,7 +219,7 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		} else {
 			sinceEdit++
 		}
-		if stall >= stallLimit || sinceEdit >= noEditLimit {
+		if stall >= stallLimit || sinceEdit >= noEditLimit || writes >= churnLimit {
 			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 			return turn, nil
 		}
@@ -224,6 +230,10 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		if sinceEdit >= noEditNudge && !noEditNudged {
 			noEditNudged = true
 			results = append(results, provider.Text(noEditNudgeText))
+		}
+		if writes >= churnNudge && !churnNudged {
+			churnNudged = true
+			results = append(results, provider.Text(churnNudgeText))
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 	}
