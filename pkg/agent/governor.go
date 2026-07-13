@@ -3,6 +3,7 @@ package agent
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 )
 
 // A turn ends when the model decides it is done, and nothing bounds a turn that
@@ -111,10 +112,57 @@ const churnNudgeText = "You have edited many times without the task converging. 
 	"Settle on the single fix the issue points to, apply it in one place, and run the project's tests once. " +
 	"If they pass, end the turn instead of changing code that already works."
 
+// The churn bound above watches the VOLUME of writes, but not their SPREAD. Two
+// turns that each write ten times look identical to it whether every write lands
+// in one file or scatters across ten. Captured subscription traces on a single
+// swebench task drew that line sharply: the model that solved it surgically edited
+// one file and stopped, a stronger model solved the same bug but sprawled its edit
+// across thirteen files at four times the cost, and a weaker model made that same
+// broad edit wrong and regressed tests that had been green. The bug lived in one
+// file; the wide blast radius was the tell of a run reaching past it. Volume alone
+// cannot see this, since a surgical run that refines one file a dozen times and a
+// sprawling one that touches a dozen files reach the same write count. This fourth
+// signal watches the count of DISTINCT files a turn has written, so a run spreading
+// its edits wide gets a single nudge to confirm the bug really spans them or
+// converge on the one that owns it.
+
+// sprawlNudge is how many distinct files a turn may write before it is nudged to
+// check its blast radius. A surgical fix touches one file or a few, so it never
+// reaches this; it sits above the widest healthy run in the captured sweep, which
+// wrote six files, so an ordinary multi-file fix clears it while a wide sprawl does
+// not. It is a nudge and not a limit on purpose: a broad fix can be correct, so the
+// turn is asked to reconsider its reach, never stopped for reaching.
+const sprawlNudge = 8
+
+// sprawlNudgeText redirects a turn spreading edits across many files back toward
+// the one the bug points at. It asks the model to justify the breadth rather than
+// forbidding it, since some fixes genuinely span files and only the model, with the
+// task in view, can tell a necessary refactor from an over-reach.
+const sprawlNudgeText = "You have edited many different files this turn. " +
+	"A bug usually lives in one place, and editing widely often reaches past the fix into code that was working. " +
+	"Confirm the change truly needs every file you have touched. " +
+	"If it does not, revert the edits that are not the fix and converge on the one file the issue points at, then run the tests once to confirm."
+
 // callSig identifies a tool call by name and exact input, so the loop can tell a
 // genuinely new action from one it has already taken this turn. The input is
 // hashed so the set of seen calls stays small when a turn runs long.
 func callSig(name string, input []byte) string {
 	sum := sha256.Sum256(input)
 	return name + ":" + hex.EncodeToString(sum[:8])
+}
+
+// writtenPath pulls the target file out of a write tool's JSON input. Both builtin
+// write tools, edit and write, name it "path", so a turn can count the distinct
+// files it has touched without knowing which tool made each write. Anything that
+// does not carry a string path (a malformed input, a write tool shaped
+// differently) yields "", which the caller simply does not count, so an unparsable
+// write never inflates or breaks the blast-radius signal.
+func writtenPath(input []byte) string {
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(input, &v); err != nil {
+		return ""
+	}
+	return v.Path
 }
