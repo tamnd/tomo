@@ -57,7 +57,7 @@ func newRoot() *cobra.Command {
 	// Which agent loop to run. The default engine and the codex-style cx engine
 	// are independent: same tools and provider, different system prompt, tool
 	// descriptions, and loop. Empty falls back to TOMO_ENGINE, then to the default.
-	root.PersistentFlags().String("engine", "", "agent loop: agent (default) or cx (codex-style)")
+	root.PersistentFlags().String("engine", "", "agent loop: agent (default), cx (codex-style), or cx-offline (cx, checked-out tree only)")
 	root.Flags().StringVarP(&prompt, "prompt", "p", "", "run a single prompt non-interactively and exit")
 	root.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
 	root.AddCommand(newChatCmd())
