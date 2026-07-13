@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/tamnd/tomo/pkg/builtin"
 	"github.com/tamnd/tomo/pkg/config"
 	"github.com/tamnd/tomo/pkg/curator"
+	"github.com/tamnd/tomo/pkg/engine/cx"
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/policy"
 	"github.com/tamnd/tomo/pkg/provider"
@@ -23,6 +25,26 @@ import (
 	"github.com/tamnd/tomo/pkg/store"
 	"github.com/tamnd/tomo/pkg/tool"
 )
+
+// engine is the agent loop a turn runs on. Both engines are driven through this
+// one interface, so a front end selects between them without knowing which it
+// holds. *agent.Agent and *cx.Engine both satisfy it.
+type engine interface {
+	Turn(ctx context.Context, history []provider.Message, user provider.Message, sink agent.Sink) ([]provider.Message, error)
+}
+
+// engineChoice resolves which loop to run: the --engine flag, then the
+// TOMO_ENGINE env, then the default engine.
+func engineChoice(cmd *cobra.Command) string {
+	v, _ := cmd.Flags().GetString("engine")
+	if v == "" {
+		v = os.Getenv("TOMO_ENGINE")
+	}
+	if v == "" {
+		v = "agent"
+	}
+	return v
+}
 
 func newChatCmd() *cobra.Command {
 	var model, session string
@@ -44,7 +66,7 @@ func newChatCmd() *cobra.Command {
 				return err
 			}
 			defer closeAudit()
-			a, label, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
+			a, label, err := buildLoop(cfg, agentBuild{engine: engineChoice(cmd), model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
 			if err != nil {
 				return err
 			}
@@ -99,7 +121,7 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 	// conversation rather than paying to rebuild state in a fresh context per step.
 	// The explicit `plan run` command still exists for a plan run under the DAG
 	// orchestrator when a caller wants steps run as isolated workers.
-	a, _, err := buildAgent(cfg, agentBuild{model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
+	a, _, err := buildLoop(cfg, agentBuild{engine: engineChoice(cmd), model: model, sandbox: cfg.Sandbox, workspace: cfg.Workspace}, guard)
 	if err != nil {
 		return err
 	}
@@ -113,6 +135,7 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 // run under, and which memory and skills dirs to read. The zero value plus a
 // model spec builds the default worker against the top-level dirs.
 type agentBuild struct {
+	engine    string // "agent" (default) or "cx", empty means the default engine
 	persona   string // extra system-prompt lines, empty for the default worker
 	model     string // provider/model spec, empty means the config default
 	memoryDir string // empty means <data>/memory
@@ -126,30 +149,91 @@ type agentBuild struct {
 // from MCP servers, are added on top of the built-ins. The build spec picks the
 // persona, model, and dirs, so each worker reads its own memory and skills.
 func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool.Tool) (*agent.Agent, string, error) {
-	name, modelID, pc, err := cfg.Resolve(b.model)
+	parts, err := resolveParts(cfg, b, extra...)
 	if err != nil {
 		return nil, "", err
 	}
+	a := &agent.Agent{
+		Provider:  parts.provider,
+		Model:     parts.modelID,
+		System:    agent.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
+		Tools:     parts.reg,
+		Gate:      guard,
+		Workspace: parts.workspace,
+	}
+	return a, parts.label, nil
+}
+
+// buildLoop builds whichever engine the spec selects: the default agent, or the
+// codex-style cx engine when b.engine is "cx". Both are returned through the
+// engine interface, so the chat REPL and the one-shot prompt path drive either
+// the same way. Every other caller (serve's workforce, plan run, the MCP server)
+// stays on buildAgent and the concrete *agent.Agent it returns.
+func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool.Tool) (engine, string, error) {
+	if b.engine != "cx" {
+		return buildAgent(cfg, b, guard, extra...)
+	}
+	parts, err := resolveParts(cfg, b, extra...)
+	if err != nil {
+		return nil, "", err
+	}
+	e := &cx.Engine{
+		Provider:  parts.provider,
+		Model:     parts.modelID,
+		System:    cx.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
+		Tools:     parts.reg,
+		Gate:      guard,
+		Workspace: parts.workspace,
+	}
+	return e, parts.label + " · cx", nil
+}
+
+// agentParts holds the resolved pieces both engines are assembled from: the
+// provider, the toolset (with cx's tool descriptions already applied when the
+// spec selects cx), the workspace, and the rendered memory and skill indexes.
+type agentParts struct {
+	provider   provider.Provider
+	modelID    string
+	label      string
+	workspace  string
+	reg        *tool.Registry
+	index      string
+	skillIndex string
+}
+
+// resolveParts does the building shared by both engines: resolve the provider and
+// model, read the memory and skill indexes, open the sandbox, and assemble the
+// tool registry. For the cx engine it rewords the builtin tool descriptions;
+// memory, skills, and any extra tools are added on top unchanged either way.
+func resolveParts(cfg *config.Config, b agentBuild, extra ...tool.Tool) (agentParts, error) {
+	name, modelID, pc, err := cfg.Resolve(b.model)
+	if err != nil {
+		return agentParts{}, err
+	}
 	p, err := provider.Build(pc)
 	if err != nil {
-		return nil, "", fmt.Errorf("provider %s: %w", name, err)
+		return agentParts{}, fmt.Errorf("provider %s: %w", name, err)
 	}
 	mem := &memory.Memory{Dir: orDefault(b.memoryDir, filepath.Join(cfg.DataDir, "memory"))}
 	index, err := mem.Index()
 	if err != nil {
-		return nil, "", err
+		return agentParts{}, err
 	}
 	skills := &skill.Store{Dir: orDefault(b.skillsDir, filepath.Join(cfg.DataDir, "skills"))}
 	skillIndex, err := skills.Index()
 	if err != nil {
-		return nil, "", err
+		return agentParts{}, err
 	}
 	workspace := orDefault(b.workspace, cfg.Workspace)
 	box, err := sandbox.New(b.sandbox, workspace)
 	if err != nil {
-		return nil, "", err
+		return agentParts{}, err
 	}
-	reg := tool.NewRegistry(builtin.All(box, workspace)...)
+	base := builtin.All(box, workspace)
+	if b.engine == "cx" {
+		base = cx.Retune(base)
+	}
+	reg := tool.NewRegistry(base...)
 	for _, t := range mem.Tools() {
 		reg.Add(t)
 	}
@@ -159,15 +243,15 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 	for _, t := range extra {
 		reg.Add(t)
 	}
-	a := &agent.Agent{
-		Provider:  p,
-		Model:     modelID,
-		System:    agent.SystemPrompt(time.Now(), workspace, b.persona, index, skillIndex),
-		Tools:     reg,
-		Gate:      guard,
-		Workspace: workspace,
-	}
-	return a, name + "/" + modelID, nil
+	return agentParts{
+		provider:   p,
+		modelID:    modelID,
+		label:      name + "/" + modelID,
+		workspace:  workspace,
+		reg:        reg,
+		index:      index,
+		skillIndex: skillIndex,
+	}, nil
 }
 
 // curatorBuild is the per-worker input to buildCurator: the model to reflect
@@ -229,7 +313,7 @@ func buildGuard(cfg *config.Config, approver policy.Approver) (*policy.Guard, fu
 	return policy.NewGuard(engine, approver, auditor), func() { auditor.Close() }, nil
 }
 
-func runREPL(cmd *cobra.Command, tio *termIO, a *agent.Agent, label string, history []provider.Message, persist func([]provider.Message) error) error {
+func runREPL(cmd *cobra.Command, tio *termIO, a engine, label string, history []provider.Message, persist func([]provider.Message) error) error {
 	ctx := cmd.Context()
 	out := tio.out
 	fmt.Fprintf(out, "tomo · %s · /new starts over, /exit leaves\n", label)
