@@ -69,6 +69,40 @@ const noEditNudgeText = "You have taken many steps without editing any file. " +
 	"If you have found the cause, make your edit now and run the tests to confirm it. " +
 	"If you went into git history to find the fix, stop: when a repository is checked out at a buggy commit the fix is not in its history, so read the code the bug points to and write the fix yourself."
 
+// The no-edit bound catches a turn that never writes. Its mirror image is a turn
+// that writes without end: it keeps editing but never converges, so the fix never
+// lands. Two swebench runs showed the two faces of this. One wrote thirty-odd
+// throwaway scripts to reproduce and watch the bug, touching real source once and
+// never testing it. Another edited the same handful of source files twenty times
+// over, one file fourteen times, thrashing on a fix that would not take. Neither
+// trips the repeat guard (each edit has new content) or the no-edit guard (each
+// round writes something), yet both burn a hundred rounds and millions of tokens
+// going nowhere. This third bound watches the volume of writes: a productive fix
+// on these tasks takes a handful of edits, so a turn that has written many times
+// over and still not ended is churning, not fixing.
+
+// churnNudge is how many file writes a turn may make before it is nudged to stop
+// churning and converge. The healthiest real run in the captured sweep wrote six
+// files, so this sits at twice that: ordinary iterate-and-fix never reaches it,
+// while a run writing scratch script after scratch script, or re-editing one file
+// over and over, does.
+const churnNudge = 12
+
+// churnLimit ends a turn that has written this many files and still not finished.
+// Past it the turn is thrashing, adding change on change without the task passing,
+// and more edits only cost tokens. It sits above churnNudge so the nudge gets a
+// fair chance to make the run settle on its fix and stop before the limit does.
+const churnLimit = 16
+
+// churnNudgeText redirects a turn that keeps writing toward a single, tested fix.
+// It names both shapes this catches: scratch files written to watch the bug, and
+// the same source edited again and again, since either is writing that is not
+// converging.
+const churnNudgeText = "You have edited many times without the task converging. " +
+	"Writing more scratch scripts to watch the bug, or re-editing the same file over and over, is not making the tests pass. " +
+	"Settle on the single fix the issue points to, apply it in one place, and run the project's tests once. " +
+	"If they pass, end the turn instead of changing code that already works."
+
 // callSig identifies a tool call by name and exact input, so the loop can tell a
 // genuinely new action from one it has already taken this turn. The input is
 // hashed so the set of seen calls stays small when a turn runs long.

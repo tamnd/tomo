@@ -348,31 +348,41 @@ func TestTurnStopsAfterRepeatedTruncation(t *testing.T) {
 }
 
 func TestTurnRunsUnbounded(t *testing.T) {
-	// A long multi-step task keeps going until the model ends its own turn.
-	// Drive far past the old fixed limit of 24 rounds to prove the loop no
-	// longer cuts a productive run off mid-task. Each round does distinct work
-	// (a different tool input) and writes a file, which is what a real long task
-	// looks like, so neither governor fires: the repeat guard targets repeated
-	// calls, and the no-edit guard targets rounds that never write. A run that
-	// keeps making distinct edits trips neither, however long it runs.
-	const rounds = noEditLimit + 5
+	// A long multi-step task keeps going until the model ends its own turn. Drive
+	// well past the old fixed limit of 24 rounds with what real work looks like:
+	// distinct reads interleaved with occasional edits. Each round does something
+	// new (a different tool input), each edit resets the no-edit counter, and the
+	// run stays under the write-churn bound, so none of the governors fire. A
+	// realistic productive run trips none of them, however long it runs.
+	const writes = churnNudge - 1 // stay just under the churn nudge
+	const readsPer = 2            // a couple of reads between edits, well under noEditNudge
+	const rounds = writes * (readsPer + 1)
 	responses := make([]*provider.Response, 0, rounds+1)
-	for i := range rounds {
+	n := 0
+	for range writes {
+		for range readsPer {
+			responses = append(responses, &provider.Response{
+				Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(fmt.Sprintf(`{"s":"look%d"}`, n))}},
+				StopReason: provider.StopToolUse,
+			})
+			n++
+		}
 		responses = append(responses, &provider.Response{
-			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "save", Input: json.RawMessage(fmt.Sprintf(`{"s":"x%d"}`, i))}},
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "save", Input: json.RawMessage(fmt.Sprintf(`{"s":"x%d"}`, n))}},
 			StopReason: provider.StopToolUse,
 		})
+		n++
 	}
 	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
 	p := &scriptProvider{responses: responses}
-	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool())}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool(), noopWriteTool())}
 
 	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
 	if err != nil {
 		t.Fatalf("err = %v, want nil: the turn should run to the model's own end", err)
 	}
 	if len(p.requests) != rounds+1 {
-		t.Errorf("model called %d times, want %d (all %d tool rounds then the end)", len(p.requests), rounds+1, rounds)
+		t.Errorf("model called %d times, want %d (all %d work rounds then the end)", len(p.requests), rounds+1, rounds)
 	}
 	last := turn[len(turn)-1]
 	if last.Role != provider.RoleAssistant || len(last.Blocks) == 0 || last.Blocks[0].Text != "done" {
@@ -446,6 +456,76 @@ func TestTurnEndsRunawayInvestigation(t *testing.T) {
 	}
 	if got := noEditNudgeCount(turn); got != 1 {
 		t.Errorf("no-edit nudge fired %d times, want exactly 1 before the end", got)
+	}
+}
+
+func churnNudgeCount(turn []provider.Message) int {
+	n := 0
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == churnNudgeText {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A turn that keeps writing files, scratch scripts or the same source over and
+// over, is nudged to converge on a single tested fix. Every write here has a
+// distinct input so the repeat guard stays quiet, and each write resets the
+// no-edit counter, so only the churn guard notices the volume of edits.
+func TestTurnNudgesWhenChurningEdits(t *testing.T) {
+	responses := make([]*provider.Response, 0, churnNudge+1)
+	for i := range churnNudge {
+		responses = append(responses, &provider.Response{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "save", Input: json.RawMessage(fmt.Sprintf(`{"s":"x%d"}`, i))}},
+			StopReason: provider.StopToolUse,
+		})
+	}
+	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := churnNudgeCount(turn); got != 1 {
+		t.Fatalf("churn nudge fired %d times, want exactly 1", got)
+	}
+	// The nudge is a nudge: the turn still ended on the model's own choice, short
+	// of the hard limit.
+	last := turn[len(turn)-1]
+	if last.Blocks[0].Text != "done" {
+		t.Errorf("final message = %+v, want the model's own end after the nudge", last)
+	}
+}
+
+// A turn that will not stop writing is ended by the churn guard, the way the
+// repeat and no-edit guards end their runaways. The model here never ends on its
+// own and keeps producing distinct edits, so only the churn bound stops it, at
+// churnLimit writes rather than running to the token wall.
+func TestTurnEndsRunawayChurn(t *testing.T) {
+	responses := make([]*provider.Response, 0, churnLimit+10)
+	for i := range churnLimit + 10 {
+		responses = append(responses, &provider.Response{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "save", Input: json.RawMessage(fmt.Sprintf(`{"s":"x%d"}`, i))}},
+			StopReason: provider.StopToolUse,
+		})
+	}
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the guard should end the turn cleanly", err)
+	}
+	if len(p.requests) != churnLimit {
+		t.Errorf("model called %d times, want %d (the churn bound)", len(p.requests), churnLimit)
+	}
+	if got := churnNudgeCount(turn); got != 1 {
+		t.Errorf("churn nudge fired %d times, want exactly 1 before the end", got)
 	}
 }
 
