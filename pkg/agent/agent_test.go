@@ -67,6 +67,21 @@ func echoTool() tool.Tool {
 	}
 }
 
+// noopWriteTool is a ClassWrite tool that reports success without touching disk.
+// The turn loop keys its no-edit guard on the tool's class, not on any file it
+// leaves behind, so a bare write tool is enough to stand for a productive round.
+func noopWriteTool() tool.Tool {
+	return tool.Tool{
+		Name:        "save",
+		Description: "pretend to write a file",
+		Class:       tool.ClassWrite,
+		Schema:      json.RawMessage(`{"type":"object"}`),
+		Run: func(_ context.Context, _ json.RawMessage) (string, error) {
+			return "saved", nil
+		},
+	}
+}
+
 func TestTurnRunsToolsUntilEndTurn(t *testing.T) {
 	p := &scriptProvider{responses: []*provider.Response{
 		{
@@ -336,19 +351,21 @@ func TestTurnRunsUnbounded(t *testing.T) {
 	// A long multi-step task keeps going until the model ends its own turn.
 	// Drive far past the old fixed limit of 24 rounds to prove the loop no
 	// longer cuts a productive run off mid-task. Each round does distinct work
-	// (a different tool input), which is what a real long task looks like, so
-	// the stall governor never fires: it targets repeated calls, not length.
-	const rounds = 40
+	// (a different tool input) and writes a file, which is what a real long task
+	// looks like, so neither governor fires: the repeat guard targets repeated
+	// calls, and the no-edit guard targets rounds that never write. A run that
+	// keeps making distinct edits trips neither, however long it runs.
+	const rounds = noEditLimit + 5
 	responses := make([]*provider.Response, 0, rounds+1)
 	for i := range rounds {
 		responses = append(responses, &provider.Response{
-			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(fmt.Sprintf(`{"s":"x%d"}`, i))}},
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "save", Input: json.RawMessage(fmt.Sprintf(`{"s":"x%d"}`, i))}},
 			StopReason: provider.StopToolUse,
 		})
 	}
 	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
 	p := &scriptProvider{responses: responses}
-	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool())}
 
 	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
 	if err != nil {
@@ -360,6 +377,75 @@ func TestTurnRunsUnbounded(t *testing.T) {
 	last := turn[len(turn)-1]
 	if last.Role != provider.RoleAssistant || len(last.Blocks) == 0 || last.Blocks[0].Text != "done" {
 		t.Errorf("final message = %+v, want the model's end-turn text", last)
+	}
+}
+
+func noEditNudgeCount(turn []provider.Message) int {
+	n := 0
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == noEditNudgeText {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A turn that investigates without ever writing a file is nudged to commit to a
+// change. Every round here makes a distinct read, so the repeat guard stays
+// quiet: only the no-edit guard notices nothing is being written.
+func TestTurnNudgesWhenInvestigatingWithoutEdit(t *testing.T) {
+	responses := make([]*provider.Response, 0, noEditNudge+1)
+	for i := range noEditNudge {
+		responses = append(responses, &provider.Response{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(fmt.Sprintf(`{"s":"look%d"}`, i))}},
+			StopReason: provider.StopToolUse,
+		})
+	}
+	responses = append(responses, &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn})
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := noEditNudgeCount(turn); got != 1 {
+		t.Fatalf("no-edit nudge fired %d times, want exactly 1", got)
+	}
+	// The nudge is a nudge: the turn still ended on the model's own choice, well
+	// short of the hard limit.
+	last := turn[len(turn)-1]
+	if last.Blocks[0].Text != "done" {
+		t.Errorf("final message = %+v, want the model's own end after the nudge", last)
+	}
+}
+
+// A turn that will not stop investigating and never writes a file is ended by
+// the no-edit guard, the way the repeat guard ends a spin. The model here never
+// ends on its own and every call is distinct, so only the no-edit bound stops
+// it, at noEditLimit rounds rather than running to the token wall.
+func TestTurnEndsRunawayInvestigation(t *testing.T) {
+	responses := make([]*provider.Response, 0, noEditLimit+10)
+	for i := range noEditLimit + 10 {
+		responses = append(responses, &provider.Response{
+			Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "t", Name: "echo", Input: json.RawMessage(fmt.Sprintf(`{"s":"dig%d"}`, i))}},
+			StopReason: provider.StopToolUse,
+		})
+	}
+	p := &scriptProvider{responses: responses}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(echoTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("go"), nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the guard should end the turn cleanly", err)
+	}
+	if len(p.requests) != noEditLimit {
+		t.Errorf("model called %d times, want %d (the no-edit bound)", len(p.requests), noEditLimit)
+	}
+	if got := noEditNudgeCount(turn); got != 1 {
+		t.Errorf("no-edit nudge fired %d times, want exactly 1 before the end", got)
 	}
 }
 

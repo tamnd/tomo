@@ -115,6 +115,11 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	// the convergence nudge to a single firing.
 	seen := map[string]bool{}
 	stall, stallNudged := 0, false
+	// sinceEdit counts rounds since the turn last wrote a file, so the governor
+	// can catch a run that investigates without end and never commits to a change
+	// (distinct calls every round, so the repeat guard stays quiet). A write
+	// resets it; noEditNudged keeps that nudge to a single firing.
+	sinceEdit, noEditNudged := 0, false
 	// The turn runs until the model ends it: a non-tool-use stop, or a tool_use
 	// stop with no tool blocks. The loop is not bounded by a fixed number of
 	// rounds, since an artificial limit kills a productive run mid-task and the
@@ -163,13 +168,20 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		var results []provider.Block
 		// roundNew flags that this round issued at least one tool call the turn
 		// had not made before. A round of only repeats is the loop standing still.
-		roundNew := false
+		// roundWrote flags that it wrote a file, which is the turn making progress
+		// toward a change rather than only investigating.
+		roundNew, roundWrote := false, false
 		for _, b := range resp.Blocks {
 			if b.Type != provider.BlockToolUse {
 				continue
 			}
-			if t, ok := a.Tools.Get(b.Name); ok && (t.Class == tool.ClassWrite || t.Class == tool.ClassExec) {
-				touched = true
+			if t, ok := a.Tools.Get(b.Name); ok {
+				if t.Class == tool.ClassWrite || t.Class == tool.ClassExec {
+					touched = true
+				}
+				if t.Class == tool.ClassWrite {
+					roundWrote = true
+				}
 			}
 			if sig := callSig(b.Name, b.Input); !seen[sig] {
 				seen[sig] = true
@@ -193,13 +205,25 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		} else {
 			stall++
 		}
-		if stall >= stallLimit {
+		// A round that wrote a file resets the investigation counter; a round that
+		// only looked deepens it. A turn that writes nothing for noEditLimit rounds
+		// is mining, not fixing, so it ends the same way a repeat spin does.
+		if roundWrote {
+			sinceEdit = 0
+		} else {
+			sinceEdit++
+		}
+		if stall >= stallLimit || sinceEdit >= noEditLimit {
 			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 			return turn, nil
 		}
 		if stall >= stallNudge && !stallNudged {
 			stallNudged = true
 			results = append(results, provider.Text(stallNudgeText))
+		}
+		if sinceEdit >= noEditNudge && !noEditNudged {
+			noEditNudged = true
+			results = append(results, provider.Text(noEditNudgeText))
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 	}
