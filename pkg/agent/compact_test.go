@@ -105,6 +105,43 @@ func TestCompactSendPreservesErrorFlag(t *testing.T) {
 	}
 }
 
+func TestCompactSendBudgetUnderKeepsAll(t *testing.T) {
+	// Budget comfortably above the transcript: nothing should be elided, since a
+	// conversation that still fits pays no quality cost.
+	a := &Agent{CompactBudgetTokens: 1 << 20}
+	msgs := []provider.Message{
+		use("1", "read"), result("1", big, false),
+		use("2", "shell"), result("2", big, false),
+	}
+	out := a.compactSend(msgs)
+	if resultContent(out[1]) != big || resultContent(out[3]) != big {
+		t.Errorf("budget not exceeded but content was elided")
+	}
+}
+
+func TestCompactSendBudgetShedsOldestFirst(t *testing.T) {
+	// Three 4000-byte results (12000 total), tail of 1, budget of 9000 bytes:
+	// shedding the oldest (~4000) drops the estimate under budget, so shedding
+	// stops and the middle result survives.
+	blob := strings.Repeat("y", 4000)
+	a := &Agent{CompactTail: 1, CompactBudgetTokens: 9000 / bytesPerToken}
+	msgs := []provider.Message{
+		use("1", "read"), result("1", blob, false),
+		use("2", "read"), result("2", blob, false),
+		use("3", "shell"), result("3", blob, false),
+	}
+	out := a.compactSend(msgs)
+	if !strings.Contains(resultContent(out[1]), "elided") {
+		t.Errorf("oldest result should have been shed: %q", resultContent(out[1]))
+	}
+	if resultContent(out[3]) != blob {
+		t.Errorf("middle result should survive once under budget: %q", resultContent(out[3]))
+	}
+	if resultContent(out[5]) != blob {
+		t.Errorf("tail result must stay verbatim: %q", resultContent(out[5]))
+	}
+}
+
 func TestCompactSendDoesNotMutateInput(t *testing.T) {
 	a := &Agent{CompactTail: 1}
 	stored := []provider.Message{
