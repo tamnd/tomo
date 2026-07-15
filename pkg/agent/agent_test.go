@@ -604,6 +604,112 @@ func TestTurnNoSprawlNudgeWhenRefiningOneFile(t *testing.T) {
 	}
 }
 
+// execTool is a ClassExec tool whose success is driven by its command input: it
+// fails while the command contains "FAIL", so a scripted turn can stage a red
+// check and then a green one the way a real test run would.
+func execTool() tool.Tool {
+	return tool.Tool{
+		Name:   "bash",
+		Class:  tool.ClassExec,
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Run: func(_ context.Context, input json.RawMessage) (string, error) {
+			var v struct {
+				Command string `json:"command"`
+			}
+			_ = json.Unmarshal(input, &v)
+			if strings.Contains(v.Command, "FAIL") {
+				return "", errors.New("exit status 1")
+			}
+			return "ok", nil
+		},
+	}
+}
+
+func verifyNudgeCount(turn []provider.Message) int {
+	n := 0
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == verifyFailedNudge {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func writeThenBash(cmd string) *provider.Response {
+	return &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "b", Name: "bash", Input: json.RawMessage(fmt.Sprintf(`{"command":%q}`, cmd))}},
+		StopReason: provider.StopToolUse,
+	}
+}
+
+// A turn that edits code and then ends while its own last check is still red is
+// nudged back once: verify-to-green must not let a self-introduced breakage ship.
+// After the nudge the model runs a green check and is allowed to finish.
+func TestTurnNudgesWhenEndingOnRedCheck(t *testing.T) {
+	write := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "w", Name: "save", Input: json.RawMessage(`{}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	end := &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn}
+	p := &scriptProvider{responses: []*provider.Response{
+		write,
+		writeThenBash("pytest -q FAIL"), // red check
+		end,                             // tries to stop on red: gets nudged
+		writeThenBash("pytest -q"),      // green check
+		end,                             // now allowed to finish
+	}}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool(), execTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("fix it"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verifyNudgeCount(turn); got != 1 {
+		t.Fatalf("verify nudge fired %d times, want exactly 1", got)
+	}
+	if last := turn[len(turn)-1]; last.Blocks[0].Text != "done" {
+		t.Errorf("final message = %+v, want the model's own end after a green check", last)
+	}
+}
+
+// A turn that edits and then runs a passing check finishes clean: the gate must
+// not add a round trip once the change is verified green.
+func TestTurnNoVerifyNudgeWhenCheckPassed(t *testing.T) {
+	write := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "w", Name: "save", Input: json.RawMessage(`{}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	end := &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn}
+	p := &scriptProvider{responses: []*provider.Response{write, writeThenBash("pytest -q"), end}}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool(), execTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("fix it"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verifyNudgeCount(turn); got != 0 {
+		t.Errorf("verify nudge fired %d times on a green turn, want 0", got)
+	}
+}
+
+// A red check with no edit this turn is not the model's breakage to own, so the
+// gate stays quiet: it only fires on a coding turn that ends on its own red run.
+func TestTurnNoVerifyNudgeWithoutEdit(t *testing.T) {
+	end := &provider.Response{Blocks: []provider.Block{provider.Text("that suite is already failing")}, StopReason: provider.StopEndTurn}
+	p := &scriptProvider{responses: []*provider.Response{writeThenBash("pytest -q FAIL"), end}}
+	a := &Agent{Provider: p, Model: "m", Tools: tool.NewRegistry(noopWriteTool(), execTool())}
+
+	turn, err := a.Turn(context.Background(), nil, provider.UserText("what is broken?"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verifyNudgeCount(turn); got != 0 {
+		t.Errorf("verify nudge fired %d times with no edit, want 0", got)
+	}
+}
+
 func TestWrittenPath(t *testing.T) {
 	cases := []struct {
 		name  string

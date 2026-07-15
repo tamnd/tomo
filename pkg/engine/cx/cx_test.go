@@ -115,6 +115,105 @@ func TestTurnDispatchesToolThenEnds(t *testing.T) {
 	}
 }
 
+// saveTool is a ClassWrite tool that reports success without touching disk, so a
+// scripted turn can stand for a productive edit round.
+func saveTool() tool.Tool {
+	return tool.Tool{
+		Name:   "save",
+		Class:  tool.ClassWrite,
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Run:    func(_ context.Context, _ json.RawMessage) (string, error) { return "saved", nil },
+	}
+}
+
+// execTool is a ClassExec tool whose success is driven by its command input: it
+// fails while the command contains "FAIL", so a scripted turn can stage a red
+// check and then a green one.
+func execTool() tool.Tool {
+	return tool.Tool{
+		Name:   "bash",
+		Class:  tool.ClassExec,
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Run: func(_ context.Context, input json.RawMessage) (string, error) {
+			var v struct {
+				Command string `json:"command"`
+			}
+			_ = json.Unmarshal(input, &v)
+			if strings.Contains(v.Command, "FAIL") {
+				return "", errors.New("exit status 1")
+			}
+			return "ok", nil
+		},
+	}
+}
+
+func bashCall(cmd string) *provider.Response {
+	return &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "b", Name: "bash", Input: json.RawMessage(`{"command":"` + cmd + `"}`)}},
+		StopReason: provider.StopToolUse,
+	}
+}
+
+func verifyNudgeCount(turn []provider.Message) int {
+	n := 0
+	for _, m := range turn {
+		for _, b := range m.Blocks {
+			if b.Type == provider.BlockText && b.Text == verifyFailedNudge {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A cx turn that edits code and ends on its own red check is nudged back once,
+// then finishes after a green run: verify-to-green holds in the codex engine too.
+func TestTurnNudgesWhenEndingOnRedCheck(t *testing.T) {
+	write := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "w", Name: "save", Input: json.RawMessage(`{}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	end := &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn}
+	sp := &scriptProvider{responses: []*provider.Response{
+		write,
+		bashCall("pytest -q FAIL"),
+		end,
+		bashCall("pytest -q"),
+		end,
+	}}
+	e := &Engine{Provider: sp, Model: "m", Tools: tool.NewRegistry(saveTool(), execTool())}
+
+	turn, err := e.Turn(context.Background(), nil, provider.UserText("fix it"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verifyNudgeCount(turn); got != 1 {
+		t.Fatalf("verify nudge fired %d times, want exactly 1", got)
+	}
+	if last := turn[len(turn)-1]; last.Blocks[0].Text != "done" {
+		t.Errorf("final message = %+v, want the model's own end after a green check", last)
+	}
+}
+
+// A cx turn that verifies green adds no gate round trip.
+func TestTurnNoVerifyNudgeWhenCheckPassed(t *testing.T) {
+	write := &provider.Response{
+		Blocks:     []provider.Block{{Type: provider.BlockToolUse, ID: "w", Name: "save", Input: json.RawMessage(`{}`)}},
+		StopReason: provider.StopToolUse,
+	}
+	end := &provider.Response{Blocks: []provider.Block{provider.Text("done")}, StopReason: provider.StopEndTurn}
+	sp := &scriptProvider{responses: []*provider.Response{write, bashCall("pytest -q"), end}}
+	e := &Engine{Provider: sp, Model: "m", Tools: tool.NewRegistry(saveTool(), execTool())}
+
+	turn, err := e.Turn(context.Background(), nil, provider.UserText("fix it"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verifyNudgeCount(turn); got != 0 {
+		t.Errorf("verify nudge fired %d times on a green turn, want 0", got)
+	}
+}
+
 // TestRetuneOverridesDescriptionsOnly checks the cx tool descriptions replace
 // only the description of the tools cx rewords, leaving every other field and
 // every other tool untouched, and that the input slice is not mutated.
