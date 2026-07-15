@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,15 +154,35 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 	if err != nil {
 		return nil, "", err
 	}
+	tail, minBytes := compactFromEnv()
 	a := &agent.Agent{
-		Provider:  parts.provider,
-		Model:     parts.modelID,
-		System:    agent.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
-		Tools:     parts.reg,
-		Gate:      guard,
-		Workspace: parts.workspace,
+		Provider:        parts.provider,
+		Model:           parts.modelID,
+		System:          agent.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
+		Tools:           parts.reg,
+		Gate:            guard,
+		Workspace:       parts.workspace,
+		CompactTail:     tail,
+		CompactMinBytes: minBytes,
 	}
 	return a, parts.label, nil
+}
+
+// compactFromEnv reads the send-time history-compaction knobs from the
+// environment. Both default to zero, which leaves compaction off and the loop's
+// behaviour unchanged, so a plain build re-sends the full transcript exactly as
+// before. TOMO_COMPACT_TAIL turns it on (the count of recent tool-result rounds
+// kept verbatim) and TOMO_COMPACT_MIN_BYTES overrides the elision threshold.
+// The env is the seam an A/B run flips without a rebuild while the default is
+// still being validated.
+func compactFromEnv() (tail, minBytes int) {
+	if v, err := strconv.Atoi(os.Getenv("TOMO_COMPACT_TAIL")); err == nil {
+		tail = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("TOMO_COMPACT_MIN_BYTES")); err == nil {
+		minBytes = v
+	}
+	return tail, minBytes
 }
 
 // buildLoop builds whichever engine the spec selects: the default agent, or the

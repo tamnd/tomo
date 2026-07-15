@@ -49,6 +49,20 @@ type Agent struct {
 	// run ends. A positive value is a hard budget, used to bound a probe or A/B run
 	// so the loop stops after a set number of rounds instead of playing out in full.
 	MaxRounds int
+	// CompactTail turns on send-time history compaction. A coding loop re-sends
+	// the whole transcript on every round, so a large tool result stays on the
+	// wire long after the model has moved past it, and on a provider that does
+	// not cache the prefix that re-send is the biggest share of a long run's
+	// cost. When positive, the last CompactTail tool-result rounds are sent
+	// verbatim and older results above CompactMinBytes are replaced by a short
+	// stub the model can re-fetch. Zero, the default, sends the full history and
+	// keeps the loop's behaviour exactly as before. The stored transcript is
+	// never changed: this shapes only the bytes on the wire.
+	CompactTail int
+	// CompactMinBytes is the size a tool result must exceed before an older copy
+	// of it is elided, so small results a model often refers back to are kept.
+	// Zero falls back to defaultCompactMinBytes when CompactTail is on.
+	CompactMinBytes int
 }
 
 // maxToolResult is the backstop cap on a single tool result. The builtin tools
@@ -164,7 +178,7 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		req := provider.Request{
 			Model:    a.Model,
 			System:   a.System,
-			Messages: concat(history, turn),
+			Messages: a.compactSend(concat(history, turn)),
 			Tools:    a.Tools.Defs(),
 		}
 		resp, err := a.stream(ctx, req, sink)
