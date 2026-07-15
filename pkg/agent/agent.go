@@ -44,6 +44,11 @@ type Agent struct {
 	// instead of fixing the code and nudge the model back on track. Empty
 	// disables that check.
 	Workspace string
+	// MaxRounds caps the model calls in one turn. Zero means unbounded, the normal
+	// mode: the convergence governor, not a fixed length, decides when a productive
+	// run ends. A positive value is a hard budget, used to bound a probe or A/B run
+	// so the loop stops after a set number of rounds instead of playing out in full.
+	MaxRounds int
 }
 
 // maxToolResult is the backstop cap on a single tool result. The builtin tools
@@ -148,8 +153,14 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	// rounds, since an artificial limit kills a productive run mid-task and the
 	// model ends its own turn once the work is done. The loop still terminates on
 	// any provider error (a dropped stream, a 4xx, a filled context window),
-	// which surfaces as the turn's error rather than an infinite spin.
+	// which surfaces as the turn's error rather than an infinite spin. The one
+	// exception is an explicit MaxRounds budget, used to bound a probe or A/B run.
+	round := 0
 	for {
+		if a.MaxRounds > 0 && round >= a.MaxRounds {
+			return turn, nil
+		}
+		round++
 		req := provider.Request{
 			Model:    a.Model,
 			System:   a.System,

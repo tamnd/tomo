@@ -34,6 +34,11 @@ type Engine struct {
 	// a git repo, the loop uses it to catch a turn that rewrote a test instead of
 	// fixing the code under test and nudge it back. Empty disables that check.
 	Workspace string
+	// MaxRounds caps the model calls in one turn. Zero means unbounded, the normal
+	// mode: the convergence governor, not a fixed length, decides when a productive
+	// run ends. A positive value is a hard budget, used to bound a probe or A/B run
+	// so the loop stops after a set number of rounds instead of playing out in full.
+	MaxRounds int
 }
 
 // maxToolResult is the backstop cap on a single tool result. The builtin tools
@@ -102,7 +107,15 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	// failure that matters: ending a coding turn on a red check. verifyNudged keeps
 	// the gate to one firing.
 	edited, verifyFailed, verifyNudged := false, false, false
+	round := 0
 	for {
+		// A positive MaxRounds is a hard budget: stop the turn once it is reached,
+		// returning what the turn produced so far. Zero leaves the loop unbounded and
+		// only the convergence governor ends it.
+		if e.MaxRounds > 0 && round >= e.MaxRounds {
+			return turn, nil
+		}
+		round++
 		req := provider.Request{
 			Model:    e.Model,
 			System:   e.System,
