@@ -46,8 +46,13 @@ type Agent struct {
 	Workspace string
 }
 
-// maxToolResult keeps one tool result from flooding the context window.
-const maxToolResult = 100_000
+// maxToolResult is the backstop cap on a single tool result. The builtin tools
+// already elide their own output to 32KB, so this only bites a tool that does
+// not: an MCP or custom tool whose raw result would otherwise be appended whole
+// and then re-sent on every later round of the turn, where one fat result
+// compounds into the largest share of a long run's tokens. It sits just above
+// the builtin cap so a builtin result passes through untouched.
+const maxToolResult = 48 * 1024
 
 // maxCallRetries is how many extra times a single model call is retried when
 // the upstream fails it transiently: a dropped or failed stream, a 5xx, a 429,
@@ -132,6 +137,12 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 	// count, so this second write signal is what tells them apart. sprawlNudged keeps
 	// that nudge to a single firing.
 	files, sprawlNudged := map[string]bool{}, false
+	// The verify-to-green guard. edited records that the turn changed a file, so
+	// the finish gate only weighs in on a coding turn, and verifyFailed holds the
+	// result of the turn's most recent test-or-build command. Together they catch
+	// the one failure that matters: a coding turn ending while its own last check
+	// is still red. verifyNudged keeps the gate to a single firing.
+	edited, verifyFailed, verifyNudged := false, false, false
 	// The turn runs until the model ends it: a non-tool-use stop, or a tool_use
 	// stop with no tool blocks. The loop is not bounded by a fixed number of
 	// rounds, since an artificial limit kills a productive run mid-task and the
@@ -174,6 +185,14 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 				turn = append(turn, provider.UserText(testNudge))
 				continue
 			}
+			// Verify-to-green: the model edited code and now wants to stop while its
+			// own last test-or-build run was still failing. It does not yet have a
+			// working change. Feed the nudge back once and let it fix and re-run.
+			if edited && verifyFailed && !verifyNudged {
+				verifyNudged = true
+				turn = append(turn, provider.UserText(verifyFailedNudge))
+				continue
+			}
 			return turn, nil
 		}
 
@@ -187,16 +206,21 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 			if b.Type != provider.BlockToolUse {
 				continue
 			}
+			isWrite, isVerifyCmd := false, false
 			if t, ok := a.Tools.Get(b.Name); ok {
 				if t.Class == tool.ClassWrite || t.Class == tool.ClassExec {
 					touched = true
 				}
 				if t.Class == tool.ClassWrite {
+					isWrite = true
 					roundWrote = true
 					writes++
 					if p := writtenPath(b.Input); p != "" {
 						files[p] = true
 					}
+				}
+				if t.Class == tool.ClassExec && looksLikeVerify(shellCommand(b.Input)) {
+					isVerifyCmd = true
 				}
 			}
 			if sig := callSig(b.Name, b.Input); !seen[sig] {
@@ -205,6 +229,14 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 			}
 			out, isErr := a.runTool(ctx, b, sink)
 			results = append(results, provider.Block{Type: provider.BlockToolResult, ToolID: b.ID, Content: out, IsError: isErr})
+			// Track the verify-to-green state in call order: an edit marks the turn as
+			// a coding turn, and a test-or-build run records whether it is still red.
+			if isWrite {
+				edited = true
+			}
+			if isVerifyCmd {
+				verifyFailed = isErr
+			}
 		}
 		if len(results) == 0 {
 			// A tool_use stop with no tool blocks is a provider quirk; end
