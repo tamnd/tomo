@@ -113,8 +113,11 @@ func TestAnthropicStream(t *testing.T) {
 		t.Errorf("tool events = %v", toolEvents)
 	}
 
-	// The request carried system, tools, and the round-tripped tool history.
-	if gotBody["system"] != "be nice" {
+	// The request carried system, tools, and the round-tripped tool history. The
+	// system field is the array form so it can carry a cache marker; its one block
+	// holds the prompt text.
+	sys := gotBody["system"].([]any)
+	if len(sys) != 1 || sys[0].(map[string]any)["text"] != "be nice" {
 		t.Errorf("system = %v", gotBody["system"])
 	}
 	if _, ok := gotBody["tools"]; !ok {
@@ -127,6 +130,101 @@ func TestAnthropicStream(t *testing.T) {
 	last := msgs[2].(map[string]any)["content"].([]any)[0].(map[string]any)
 	if last["type"] != "tool_result" || last["tool_use_id"] != "t0" {
 		t.Errorf("tool_result on the wire = %v", last)
+	}
+}
+
+// cacheControlOf returns the cache_control marker type on a wire block, or "" if
+// the block carries none.
+func cacheControlOf(block any) string {
+	m, ok := block.(map[string]any)
+	if !ok {
+		return ""
+	}
+	cc, ok := m["cache_control"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	s, _ := cc["type"].(string)
+	return s
+}
+
+// The provider marks the static prefix and the conversation tail as cache
+// breakpoints so a following turn reads the resent history back at the cache rate
+// instead of paying full price for it. With tools present, the breakpoint sits on
+// the last tool (covering system plus tools), and a second one sits on the last
+// block of the last message.
+func TestAnthropicSetsCacheControl(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, anthropicFixture)
+	}))
+	defer srv.Close()
+
+	p := &Anthropic{APIKey: "sk-test", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), Request{
+		Model:  "claude-test",
+		System: "be nice",
+		Messages: []Message{
+			UserText("first"),
+			{Role: RoleUser, Blocks: []Block{{Type: BlockText, Text: "second"}}},
+		},
+		Tools: []Tool{
+			{Name: "a", Description: "one", Schema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "shell", Description: "run a command", Schema: json.RawMessage(`{"type":"object"}`)},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// System carries no marker when tools are present: the prefix breakpoint is on
+	// the last tool, which covers system plus every tool.
+	sys := gotBody["system"].([]any)
+	if cc := cacheControlOf(sys[0]); cc != "" {
+		t.Errorf("system marker = %q, want none when tools present", cc)
+	}
+	tools := gotBody["tools"].([]any)
+	if cc := cacheControlOf(tools[0]); cc != "" {
+		t.Errorf("first tool marker = %q, want none", cc)
+	}
+	if cc := cacheControlOf(tools[len(tools)-1]); cc != "ephemeral" {
+		t.Errorf("last tool marker = %q, want ephemeral", cc)
+	}
+	// The last block of the last message carries the conversation-tail breakpoint.
+	msgs := gotBody["messages"].([]any)
+	lastMsg := msgs[len(msgs)-1].(map[string]any)["content"].([]any)
+	if cc := cacheControlOf(lastMsg[len(lastMsg)-1]); cc != "ephemeral" {
+		t.Errorf("last message-block marker = %q, want ephemeral", cc)
+	}
+}
+
+// With no tools, the prefix breakpoint falls back to the system block, since
+// there is no last tool to carry it.
+func TestAnthropicCacheControlNoTools(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, anthropicFixture)
+	}))
+	defer srv.Close()
+
+	p := &Anthropic{APIKey: "sk-test", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		System:   "be nice",
+		Messages: []Message{UserText("hi")},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := gotBody["system"].([]any)
+	if cc := cacheControlOf(sys[0]); cc != "ephemeral" {
+		t.Errorf("system marker = %q, want ephemeral when no tools", cc)
 	}
 }
 
