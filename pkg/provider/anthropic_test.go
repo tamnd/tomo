@@ -13,7 +13,7 @@ import (
 // anthropicFixture is a real-shaped Messages API stream: a text block, then a
 // tool_use block whose input arrives as JSON fragments.
 const anthropicFixture = `event: message_start
-data: {"type":"message_start","message":{"usage":{"input_tokens":42,"output_tokens":1}}}
+data: {"type":"message_start","message":{"usage":{"input_tokens":42,"output_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":8}}}
 
 event: content_block_start
 data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
@@ -91,7 +91,9 @@ func TestAnthropicStream(t *testing.T) {
 	if resp.StopReason != StopToolUse {
 		t.Errorf("stop = %q", resp.StopReason)
 	}
-	if resp.Usage.InputTokens != 42 || resp.Usage.OutputTokens != 17 {
+	// InputTokens is the whole prompt: fresh 42 plus cache read 100 plus cache
+	// creation 8. CachedInputTokens is the read subset.
+	if resp.Usage.InputTokens != 150 || resp.Usage.OutputTokens != 17 || resp.Usage.CachedInputTokens != 100 {
 		t.Errorf("usage = %+v", resp.Usage)
 	}
 	if len(resp.Blocks) != 2 {
