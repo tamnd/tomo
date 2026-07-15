@@ -139,7 +139,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			return turn, nil
 		}
 		if resp.StopReason != provider.StopToolUse {
-			if touched && !nudged && onlyTestsEdited(e.Workspace) {
+			if touched && !nudged && weakensTests(e.Workspace) {
 				nudged = true
 				turn = append(turn, provider.UserText(testNudge))
 				continue

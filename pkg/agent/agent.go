@@ -189,9 +189,9 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 			return turn, nil
 		}
 		if resp.StopReason != provider.StopToolUse {
-			if touched && !nudged && onlyTestsEdited(a.Workspace) {
-				// The model wants to stop after rewriting a test and changing
-				// no source. Feed the nudge back once and let it try again.
+			if touched && !nudged && weakensTests(a.Workspace) {
+				// The model wants to stop having weakened or deleted an existing
+				// test. Feed the nudge back once and let it try again.
 				nudged = true
 				turn = append(turn, provider.UserText(testNudge))
 				continue
