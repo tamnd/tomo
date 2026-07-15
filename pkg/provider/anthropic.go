@@ -61,6 +61,8 @@ type anthPart struct {
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`
+
+	CacheControl *anthCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthSource struct {
@@ -70,9 +72,33 @@ type anthSource struct {
 }
 
 type anthTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	InputSchema  json.RawMessage   `json:"input_schema"`
+	CacheControl *anthCacheControl `json:"cache_control,omitempty"`
+}
+
+// anthCacheControl marks a content block as a prompt-cache breakpoint: Anthropic
+// caches the whole prefix ending at the block and, on a later call whose prefix
+// matches, serves it at a tenth of the input rate instead of re-billing it. The
+// only kind is "ephemeral" (about a five minute TTL), which is what an agent
+// turn needs: the system prompt and tools are identical every round, and the
+// conversation grows by a suffix, so a breakpoint on the static prefix and one
+// on the last message turn the quadratic history re-send into cache reads.
+type anthCacheControl struct {
+	Type string `json:"type"`
+}
+
+// ephemeral is the single breakpoint value; a package var so every call shares it.
+var ephemeral = &anthCacheControl{Type: "ephemeral"}
+
+// anthSysBlock is the array form of the system field. The plain-string form the
+// API also accepts cannot carry a cache_control marker, so the system prompt is
+// sent as one text block that can be cached.
+type anthSysBlock struct {
+	Type         string            `json:"type"`
+	Text         string            `json:"text"`
+	CacheControl *anthCacheControl `json:"cache_control,omitempty"`
 }
 
 func anthPartOf(b Block) (anthPart, error) {
@@ -104,8 +130,17 @@ func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) (
 		"max_tokens": anthropicOutputCeiling,
 		"stream":     true,
 	}
+	// The system prompt and tool set are byte-identical every round, so they form
+	// the static prefix a cache breakpoint should end on. Send system as a single
+	// cached text block (the plain-string form cannot carry a marker), and put the
+	// breakpoint on the last tool when tools are present so it covers system plus
+	// every tool; fall back to the system block when there are no tools.
 	if req.System != "" {
-		body["system"] = req.System
+		sys := anthSysBlock{Type: "text", Text: req.System}
+		if len(req.Tools) == 0 {
+			sys.CacheControl = ephemeral
+		}
+		body["system"] = []anthSysBlock{sys}
 	}
 	msgs := make([]anthMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
@@ -119,12 +154,22 @@ func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) (
 		}
 		msgs = append(msgs, am)
 	}
+	// The conversation grows by appending, so this turn's history is a prefix of
+	// the next turn's request. A breakpoint on the last block of the last message
+	// lets the following turn read the whole history back from cache instead of
+	// re-billing it, which is what turns the quadratic resend into cache reads.
+	if n := len(msgs); n > 0 {
+		if c := len(msgs[n-1].Content); c > 0 {
+			msgs[n-1].Content[c-1].CacheControl = ephemeral
+		}
+	}
 	body["messages"] = msgs
 	if len(req.Tools) > 0 {
 		tools := make([]anthTool, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			tools = append(tools, anthTool{Name: t.Name, Description: t.Description, InputSchema: t.Schema})
 		}
+		tools[len(tools)-1].CacheControl = ephemeral
 		body["tools"] = tools
 	}
 
