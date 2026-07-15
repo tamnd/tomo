@@ -82,10 +82,16 @@ type Request struct {
 	Tools    []Tool
 }
 
-// Usage counts tokens for one call.
+// Usage counts tokens for one call. InputTokens is the whole prompt, cached
+// tokens included, so it stays comparable across calls and dialects. CachedInputTokens
+// is the subset of that prompt the provider served from its prefix cache, a read
+// billed at a fraction of the fresh rate; it is a subset of InputTokens, not an
+// addition to it, so a caller that prices a call subtracts it out to get the fresh
+// count. Zero means the provider reported no cache read (or does not report one).
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens       int `json:"input_tokens"`
+	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	OutputTokens      int `json:"output_tokens"`
 }
 
 // Stop reasons, normalized across dialects.

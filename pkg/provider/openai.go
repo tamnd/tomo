@@ -197,8 +197,14 @@ type oaChunk struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokensDetails *struct {
+			// CachedTokens is the part of prompt_tokens the server matched against its
+			// prefix cache and billed at the cache-read rate. It is a subset of
+			// prompt_tokens, not an addition to it.
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 	// Error carries an upstream failure delivered mid-stream. A gateway that
 	// drops a completion sends a data line like
@@ -232,6 +238,9 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 		if ch.Usage != nil {
 			out.Usage.InputTokens = ch.Usage.PromptTokens
 			out.Usage.OutputTokens = ch.Usage.CompletionTokens
+			if d := ch.Usage.PromptTokensDetails; d != nil {
+				out.Usage.CachedInputTokens = d.CachedTokens
+			}
 		}
 		if len(ch.Choices) == 0 {
 			return nil

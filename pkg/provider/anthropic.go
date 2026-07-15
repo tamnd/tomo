@@ -161,7 +161,7 @@ type anthEvent struct {
 	Type    string `json:"type"`
 	Index   int    `json:"index"`
 	Message struct {
-		Usage Usage `json:"usage"`
+		Usage anthUsage `json:"usage"`
 	} `json:"message"`
 	ContentBlock struct {
 		Type string `json:"type"`
@@ -175,11 +175,22 @@ type anthEvent struct {
 		PartialJSON string `json:"partial_json"`
 		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
-	Usage Usage `json:"usage"`
+	Usage anthUsage `json:"usage"`
 	Error struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// anthUsage captures Anthropic's token names, which differ from the shared Usage
+// shape: input_tokens is the fresh prompt only, with cache reads and writes
+// reported apart. The stream maps this onto the shared Usage where InputTokens is
+// the whole prompt (fresh plus cache) and CachedInputTokens is the read subset.
+type anthUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
 func parseAnthropicStream(r io.Reader, emit func(Event)) (*Response, error) {
@@ -197,7 +208,12 @@ func parseAnthropicStream(r io.Reader, emit func(Event)) (*Response, error) {
 		case "error":
 			return fmt.Errorf("anthropic: stream error %s: %s", ev.Error.Type, ev.Error.Message)
 		case "message_start":
-			out.Usage.InputTokens = ev.Message.Usage.InputTokens
+			// Anthropic reports the fresh prompt, cache reads, and cache writes apart.
+			// InputTokens is the whole prompt, so sum them; CachedInputTokens is the read
+			// subset, priced at the cache-read rate.
+			u := ev.Message.Usage
+			out.Usage.InputTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+			out.Usage.CachedInputTokens = u.CacheReadInputTokens
 		case "content_block_start":
 			for len(blocks) <= ev.Index {
 				blocks = append(blocks, Block{})

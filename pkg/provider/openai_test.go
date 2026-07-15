@@ -24,7 +24,7 @@ data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"
 
 data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
 
-data: {"choices":[],"usage":{"prompt_tokens":33,"completion_tokens":9}}
+data: {"choices":[],"usage":{"prompt_tokens":33,"completion_tokens":9,"prompt_tokens_details":{"cached_tokens":20}}}
 
 data: [DONE]
 `
@@ -73,7 +73,7 @@ func TestOpenAIStream(t *testing.T) {
 	if resp.StopReason != StopToolUse {
 		t.Errorf("stop = %q", resp.StopReason)
 	}
-	if resp.Usage.InputTokens != 33 || resp.Usage.OutputTokens != 9 {
+	if resp.Usage.InputTokens != 33 || resp.Usage.OutputTokens != 9 || resp.Usage.CachedInputTokens != 20 {
 		t.Errorf("usage = %+v", resp.Usage)
 	}
 	if len(resp.Blocks) != 2 {
