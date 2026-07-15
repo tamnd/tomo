@@ -238,13 +238,31 @@ func resolveParts(cfg *config.Config, b agentBuild, extra ...tool.Tool) (agentPa
 	if isCX(b.engine) {
 		base = cx.Retune(base)
 	}
-	reg := tool.NewRegistry(base...)
-	// Advertise the memory and skill readers only once their catalog holds an
-	// entry. Both read one item named in an index; with the index empty the
-	// reader can only fail, so offering it spends schema tokens on every request
-	// and invites a call that returns nothing. The memory writer stays, since a
-	// first fact can always be saved.
+	// Keep the live loop a lean coding surface, the same in every mode so the
+	// toolset a turn sees does not shift between interactive and one-shot runs.
+	// Two builtins earn no place in a task turn and only cost schema tokens on
+	// every request: `time` restates the clock the system prompt already carries,
+	// and a network tool the sandbox blackholes can only fail, so it is dropped
+	// wherever the mode denies the net.
+	netOff := !sandbox.NetAllowed(b.sandbox)
+	reg := tool.NewRegistry()
+	for _, t := range base {
+		if t.Name == "time" {
+			continue
+		}
+		if netOff && t.Class == tool.ClassNet {
+			continue
+		}
+		reg.Add(t)
+	}
+	// The memory reader shows only once its index holds an entry, since a reader
+	// of an empty index can only fail. The writer is left off the turn: memories
+	// are settled out of band by the curator, not written mid-task, so carrying
+	// the writer in every request buys nothing the loop uses.
 	for _, t := range mem.Tools() {
+		if t.Class == tool.ClassWrite {
+			continue
+		}
 		if index == "" && t.Class == tool.ClassRead {
 			continue
 		}

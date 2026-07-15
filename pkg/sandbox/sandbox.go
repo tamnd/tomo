@@ -58,6 +58,20 @@ func New(mode, dir string) (Sandbox, error) {
 	}
 }
 
+// NetAllowed reports whether a sandbox mode leaves outbound network reachable.
+// The unconfined default runs with the agent's own privileges, so it can reach
+// the net; the net and dev modes open it explicitly; restricted and standard
+// (and its hako alias) blackhole it. A caller uses this to avoid advertising a
+// network tool that the sandbox would only let fail.
+func NetAllowed(mode string) bool {
+	switch mode {
+	case "", "none", "net", "dev":
+		return true
+	default:
+		return false
+	}
+}
+
 // workdir resolves the directory a sandbox runs in. A caller that passes an
 // explicit dir gets it back; an empty dir falls back to the directory the agent
 // was launched from, which is the natural project boundary for a shell the
