@@ -239,11 +239,21 @@ func resolveParts(cfg *config.Config, b agentBuild, extra ...tool.Tool) (agentPa
 		base = cx.Retune(base)
 	}
 	reg := tool.NewRegistry(base...)
+	// Advertise the memory and skill readers only once their catalog holds an
+	// entry. Both read one item named in an index; with the index empty the
+	// reader can only fail, so offering it spends schema tokens on every request
+	// and invites a call that returns nothing. The memory writer stays, since a
+	// first fact can always be saved.
 	for _, t := range mem.Tools() {
+		if index == "" && t.Class == tool.ClassRead {
+			continue
+		}
 		reg.Add(t)
 	}
-	for _, t := range skills.Tools() {
-		reg.Add(t)
+	if skillIndex != "" {
+		for _, t := range skills.Tools() {
+			reg.Add(t)
+		}
 	}
 	for _, t := range extra {
 		reg.Add(t)
