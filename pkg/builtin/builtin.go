@@ -85,6 +85,15 @@ func shellTool(box sandbox.Sandbox, workspace string) tool.Tool {
 	}
 }
 
+// wholeFileLines is the size below which a read from the top returns the whole
+// file even when the caller passed a smaller limit. Paginating a small file is a
+// false economy: the model just comes back a round later for the tail, and a
+// wasted round re-sends the entire turn history, which dwarfs the few hundred
+// lines saved. Above this the file is genuinely large and an explicit limit is
+// honoured. A deliberate offset (reading into the middle of a big file) always
+// wins, so this only ever widens a top read, never redirects one.
+const wholeFileLines = 400
+
 // defaultReadLines caps a read that asked for no range, so opening a large file
 // returns its head rather than its whole self. The model reads on with offset.
 const defaultReadLines = 2000
@@ -93,7 +102,7 @@ func readFileTool(workspace string) tool.Tool {
 	return tool.Tool{
 		Name: "read",
 		Description: "Read a UTF-8 text file and return its contents. A relative path is taken relative to your working directory. " +
-			"For a large file, pass `offset` (1-based first line) and `limit` (line count) to read a window; without them only the first lines are returned.",
+			"A small file comes back whole in one call. For a large file, pass `offset` (1-based first line) and `limit` (line count) to read a window; without them only the first lines are returned.",
 		Class: tool.ClassRead,
 		Schema: json.RawMessage(`{
 			"type": "object",
@@ -129,6 +138,11 @@ func readFileTool(workspace string) tool.Tool {
 			limit := v.Limit
 			if limit <= 0 {
 				limit = defaultReadLines
+			}
+			// A small file read from the top comes back whole, even if the caller
+			// clipped it, so the model does not spend a second round fetching the tail.
+			if start == 0 && total <= wholeFileLines {
+				limit = total
 			}
 			end := min(start+limit, total)
 			window := append([]string(nil), lines[start:end]...)

@@ -100,6 +100,54 @@ func TestReadRangeAndCap(t *testing.T) {
 	}
 }
 
+func TestReadSmallFileWholeIgnoresClipLimit(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= 205; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "small.py"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rd := readFileTool(dir)
+	// The model clips a 205-line file to 150 lines; a small file comes back whole
+	// anyway, so it never spends a second round fetching the tail.
+	out, err := rd.Run(context.Background(), mustJSON(map[string]any{"path": "small.py", "limit": 150}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "line 205") {
+		t.Errorf("small file was clipped instead of returned whole: tail missing")
+	}
+	if strings.Contains(out, "pass offset and limit for more") {
+		t.Errorf("small file showed a truncation banner: %q", out[:80])
+	}
+}
+
+func TestReadLargeFileHonoursClipLimit(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= wholeFileLines+50; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.py"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rd := readFileTool(dir)
+	// A genuinely large file still respects an explicit limit: the whole-file
+	// widening must not blow a small window up to the entire file.
+	out, err := rd.Run(context.Background(), mustJSON(map[string]any{"path": "big.py", "limit": 10}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "pass offset and limit for more") {
+		t.Errorf("large file did not paginate: %q", out[:80])
+	}
+	if strings.Contains(out, "line 205") {
+		t.Errorf("large file returned past its limit")
+	}
+}
+
 func TestReadRejectsBinary(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bin")
