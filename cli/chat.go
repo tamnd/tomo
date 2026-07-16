@@ -230,13 +230,17 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		return nil, "", err
 	}
 	offline := b.engine == "cx-offline"
+	ctail, cmin, cbudget := cx.CompactFromEnv()
 	e := &cx.Engine{
-		Provider:  parts.provider,
-		Model:     parts.modelID,
-		System:    cx.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex, offline),
-		Tools:     parts.reg,
-		Gate:      guard,
-		Workspace: parts.workspace,
+		Provider:            parts.provider,
+		Model:               parts.modelID,
+		System:              cx.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex, offline),
+		Tools:               parts.reg,
+		Gate:                guard,
+		Workspace:           parts.workspace,
+		CompactTail:         ctail,
+		CompactMinBytes:     cmin,
+		CompactBudgetTokens: cbudget,
 	}
 	return e, parts.label + " · " + b.engine, nil
 }
