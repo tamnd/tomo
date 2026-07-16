@@ -452,6 +452,9 @@ func TestLooksLikeActing(t *testing.T) {
 		// An attempted tool call that produced no runnable block: a weak model invents
 		// a tool or writes an unreadable call. On this branch the action was lost.
 		{"<tool_call>\n<tool_name>AgenticSearch</tool_name>\n<parameter name=\"query\">_parse_url</parameter>\n</tool_call>", true},
+		// The plural wrapper and an attributed opening tag, the shape deepseek-v4-flash-free
+		// quit one round on: a <tool_call kind="text_write"> that carried only narration.
+		{"<tool_calls>\n<tool_call kind=\"text_write\" params=\"...\">\nI'll start by exploring the repository structure.\n</tool_call>\n</tool_calls>", true},
 		// Genuine description with no sign the model acted or meant to act. A bare
 		// diagnosis noun stays an answer, not a stalled solve, so it is not nudged.
 		{"Here is my analysis.", false},
