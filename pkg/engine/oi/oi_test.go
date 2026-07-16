@@ -449,6 +449,11 @@ func TestLooksLikeActing(t *testing.T) {
 		// mid solve. This is the gitingest-94 stall shape.
 		{"I need to find the parse_query.py file first.", true},
 		{"Let me look at the specific function that parses the url.", true},
+		// The exploration-preamble shape: the model announces where it will begin
+		// and stops on the plan. hy3-free quit one round on gitingest-94 with exactly
+		// this line, which the verb-specific "let me look/find" markers missed.
+		{"Let me start by exploring the repository structure and the relevant file.", true},
+		{"I'll explore the codebase to find the parser.", true},
 		// An attempted tool call that produced no runnable block: a weak model invents
 		// a tool or writes an unreadable call. On this branch the action was lost.
 		{"<tool_call>\n<tool_name>AgenticSearch</tool_name>\n<parameter name=\"query\">_parse_url</parameter>\n</tool_call>", true},

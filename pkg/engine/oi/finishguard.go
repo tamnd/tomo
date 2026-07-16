@@ -97,6 +97,14 @@ var actingMarkers = []string{
 	"let me look", "let me find", "let me locate", "let me check", "let me examine",
 	"let me search", "let me inspect", "let me open", "let me read",
 	"we need to change", "we need to modify", "we need to edit",
+	// A model that opens the solve by announcing where it will begin, then stops on
+	// the plan without emitting the first block. hy3-free quit in one round on
+	// gitingest-94 with "Let me start by exploring the repository structure", which
+	// none of the verb-specific "let me look/find" markers above catch: the
+	// exploration-preamble phrasings are their own investigative-intent shape.
+	"let me start", "let me begin", "let me explore", "let me first",
+	"i'll explore", "i will explore", "i'll start", "i will start",
+	"i'll begin", "i will begin", "start by exploring", "begin by exploring",
 	// An attempted tool call that yielded no runnable block: the model reached for a
 	// structured tool in XML, but either named a tool that does not exist (a weak
 	// model invents an "AgenticSearch") or wrote a shape the salvage could not read.

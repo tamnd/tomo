@@ -77,6 +77,21 @@ var xmlToolCallDialect = dialect{
 	hint:  "\n\nEmit each action as a single <tool_call> with a <function=execute_bash> or <function=execute_python> and a <parameter=command> holding the code. To finish, reply with plain prose and no tool call.",
 }
 
+// hashToolCallDialect fits hy3-free, which emits a tool call whose tags carry a
+// hex message id: <tool_calls:6124c78e> wrapping <tool_call:6124c78e>shell and the
+// code, sometimes in ![CDATA[ ... ]] and usually trailed by a stray Markdown fence
+// the model closes itself with. None of it is the clean <tool_call> the Hermes
+// salvage reads, so on gitingest-94 hy3 ran every block but one as empty and gave
+// up, though it had already diagnosed the one-line fix. The parse reads the hash
+// costume first, then falls back to the Markdown fence parser for the rounds hy3
+// does write a clean fence. The hint steers it toward the fence, the shape it
+// handles most cleanly.
+var hashToolCallDialect = dialect{
+	name:  "hashtoolcall",
+	parse: parseHashToolCall,
+	hint:  "\n\nEmit each action as a single Markdown code fence and nothing else: ```shell or ```python on the opening line, the code, then a closing ```. Do not wrap the code in <tool_call> tags or CDATA. To finish, reply with plain prose and no code fence.",
+}
+
 // dialectFor picks the dialect for a model by family, matching on the bare model
 // id (any provider/ prefix stripped). An unknown model gets Markdown, the safe
 // default: a model that writes fences is parsed correctly, and one that does not
@@ -92,9 +107,62 @@ func dialectFor(model string) dialect {
 		return toolJSONDialect
 	case strings.Contains(id, "nemotron"), strings.Contains(id, "hermes"), strings.Contains(id, "qwen"):
 		return xmlToolCallDialect
+	case strings.Contains(id, "hy3"):
+		return hashToolCallDialect
 	default:
 		return markdownDialect
 	}
+}
+
+// parseHashToolCall reads hy3-free's costume: a tool call whose tags carry a hex
+// message id, <tool_call:6124c78e>, which the clean-<tool_call> salvage cannot
+// see. It opens with <tool_calls:HASH> (or the bare <tool_call:HASH>), names the
+// language on the next tagged line, then gives the code, sometimes wrapped in
+// ![CDATA[ ... ]] and often trailed by a stray Markdown fence the model appends.
+// The parse takes everything after the first hash opener, cuts that trailing
+// fence, drops the hash tags and the CDATA and invoke/parameter wrappers, reads
+// the first language word as the language, and takes the rest as the code. When
+// there is no hash opener at all it falls back to the Markdown parser, so a round
+// where hy3 does write a clean fence is still read.
+func parseHashToolCall(reply string) []block {
+	loc := hashToolOpenRe.FindStringIndex(reply)
+	if loc == nil {
+		return parseMarkdown(reply)
+	}
+	body := reply[loc[1]:]
+	// Cut a stray closing Markdown fence the model appends after the code. The code
+	// itself never carries a line that is a bare fence, so this only drops the tail.
+	if i := strings.Index(body, "\n```"); i >= 0 {
+		body = body[:i]
+	}
+	// Drop the hash tool-call tags and the CDATA and invoke/parameter wrappers the
+	// model pads the action with, leaving the language line and the code.
+	body = hashToolTagRe.ReplaceAllString(body, "\n")
+	for _, w := range []string{"<invoke>", "</invoke>", "![CDATA[", "]]", "</parameter>"} {
+		body = strings.ReplaceAll(body, w, "\n")
+	}
+	lines := strings.Split(body, "\n")
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i >= len(lines) {
+		return nil
+	}
+	lang := ""
+	switch strings.ToLower(strings.TrimSpace(lines[i])) {
+	case "python", "py", "python3", "sh", "shell", "bash", "zsh":
+		lang = strings.ToLower(strings.TrimSpace(lines[i]))
+		i++
+	}
+	code := strings.Trim(strings.Join(lines[i:], "\n"), "\n")
+	if strings.TrimSpace(code) == "" {
+		return nil
+	}
+	if lang == "" {
+		lang = "sh"
+	}
+	return []block{{lang: lang, code: code}}
 }
 
 // jsonAction is the union of the field names the tool-JSON dialects use for a
@@ -188,6 +256,9 @@ func firstJSONObject(s string) string {
 var (
 	xmlFuncRe  = regexp.MustCompile(`(?s)<function=([a-zA-Z0-9_]+)>(.*?)</function>`)
 	xmlParamRe = regexp.MustCompile(`(?s)<parameter=[a-zA-Z0-9_]+>(.*?)</parameter>`)
+
+	hashToolOpenRe = regexp.MustCompile(`<tool_calls?:[0-9a-fA-F]+>`)
+	hashToolTagRe  = regexp.MustCompile(`</?tool_calls?:[0-9a-fA-F]+>`)
 
 	xmlToolCallRe = regexp.MustCompile(`(?s)<tool_call>(.*?)</tool_call>`)
 	xmlCodeRe     = regexp.MustCompile(`(?s)<code>(.*?)</code>`)

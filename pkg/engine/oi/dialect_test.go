@@ -13,7 +13,7 @@ func TestDialectForByFamily(t *testing.T) {
 		{"opencode/nemotron-3-ultra-free", "xmltoolcall"},
 		{"hermes-4", "xmltoolcall"},
 		{"qwen3.5-plus", "xmltoolcall"},
-		{"opencode/hy3-free", "markdown"},
+		{"opencode/hy3-free", "hashtoolcall"},
 		{"deepseek-v4-flash-free", "markdown"},
 		{"something-unknown", "markdown"},
 	} {
@@ -68,6 +68,41 @@ func TestXMLToolCallPythonAndMultiple(t *testing.T) {
 	blocks := parseXMLToolCall(reply)
 	if len(blocks) != 2 || blocks[0].lang != "python" || blocks[0].code != "print(1)" || blocks[1].lang != "shell" || blocks[1].code != "ls" {
 		t.Fatalf("blocks = %+v", blocks)
+	}
+}
+
+// The hash-tool-call dialect must read hy3-free's real costume: hash-suffixed
+// <tool_call:HASH> tags naming the language and carrying the code, in the three
+// shapes it produced on gitingest-94, and it must fall back to the fence parser on
+// a round hy3 writes a clean fence.
+func TestParseHashToolCall(t *testing.T) {
+	// Shape one: <tool_calls:HASH> wrapper, ![CDATA[ ... ]] code, invoke/parameter
+	// junk the model pads with, no trailing fence.
+	cdata := "Let me look at the relevant file.<tool_calls:6124c78e>\n<tool_call:6124c78e>shell\n<tool_call:6124c78e>![CDATA[\ncat /work/src/gitingest/parse_query.py\n]]</parameter>\n</invoke>\n</tool_call:6124c78e>\n</tool_calls:6124c78e>"
+	if b := parseHashToolCall(cdata); len(b) != 1 || b[0].lang != "shell" || b[0].code != "cat /work/src/gitingest/parse_query.py" {
+		t.Fatalf("cdata shape: %+v", b)
+	}
+	// Shape two: bare code after the language line, trailed by a stray closing fence.
+	bare := "<tool_calls:6124c78e>\n<tool_call:6124c78e>shell\nawk 'NR>=110 && NR<=180' /work/src/gitingest/parse_query.py\n```"
+	if b := parseHashToolCall(bare); len(b) != 1 || b[0].lang != "shell" || b[0].code != "awk 'NR>=110 && NR<=180' /work/src/gitingest/parse_query.py" {
+		t.Fatalf("bare shape: %+v", b)
+	}
+	// Shape three: a multi-line python heredoc, the round that carried hy3's real
+	// one-line fix and had been running empty.
+	heredoc := "The fix is targeted.<tool_calls:6124c78e>\n<tool_call:6124c78e>shell\ncd /work && python - <<'EOF'\nimport re\nprint('patched')\nEOF\n```"
+	b := parseHashToolCall(heredoc)
+	if len(b) != 1 || b[0].lang != "shell" || b[0].code != "cd /work && python - <<'EOF'\nimport re\nprint('patched')\nEOF" {
+		t.Fatalf("heredoc shape: %+v", b)
+	}
+	// Fallback: a round with no hash costume, just a clean fence, is still read.
+	fence := "```shell\ncat /work/x.py\n```"
+	if b := parseHashToolCall(fence); len(b) != 1 || b[0].lang != "shell" || b[0].code != "cat /work/x.py" {
+		t.Fatalf("fence fallback: %+v", b)
+	}
+	// A python language line selects python.
+	py := "<tool_call:deadbeef>python\nprint(1)\n```"
+	if b := parseHashToolCall(py); len(b) != 1 || b[0].lang != "python" || b[0].code != "print(1)" {
+		t.Fatalf("python shape: %+v", b)
 	}
 }
 
