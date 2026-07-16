@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,15 +154,49 @@ func buildAgent(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...too
 	if err != nil {
 		return nil, "", err
 	}
+	c := compactFromEnv()
 	a := &agent.Agent{
-		Provider:  parts.provider,
-		Model:     parts.modelID,
-		System:    agent.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
-		Tools:     parts.reg,
-		Gate:      guard,
-		Workspace: parts.workspace,
+		Provider:            parts.provider,
+		Model:               parts.modelID,
+		System:              agent.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
+		Tools:               parts.reg,
+		Gate:                guard,
+		Workspace:           parts.workspace,
+		CompactTail:         c.tail,
+		CompactBudgetTokens: c.budgetTokens,
+		CompactMinBytes:     c.minBytes,
 	}
 	return a, parts.label, nil
+}
+
+// compactSettings are the send-time history-compaction knobs read from the
+// environment, each adjustable so an operator can match the gate to the model in
+// play (a small-context model sheds sooner than a large one).
+type compactSettings struct {
+	tail         int // recent tool-result rounds always kept whole
+	budgetTokens int // context-length-aware ceiling; 0 sheds unconditionally
+	minBytes     int // a result must exceed this before an older copy is elided
+}
+
+// compactFromEnv reads the compaction knobs. All default to zero, which leaves
+// compaction off and the loop's behaviour unchanged, so a plain build re-sends
+// the full transcript exactly as before. TOMO_COMPACT_TAIL sets the recent
+// window, TOMO_COMPACT_BUDGET_TOKENS keys shedding to the model's context length
+// (elide only past this estimate), and TOMO_COMPACT_MIN_BYTES sets the size a
+// result must exceed to be elided. The env is the seam an A/B arm selects
+// without a rebuild.
+func compactFromEnv() compactSettings {
+	var c compactSettings
+	if v, err := strconv.Atoi(os.Getenv("TOMO_COMPACT_TAIL")); err == nil {
+		c.tail = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("TOMO_COMPACT_BUDGET_TOKENS")); err == nil {
+		c.budgetTokens = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("TOMO_COMPACT_MIN_BYTES")); err == nil {
+		c.minBytes = v
+	}
+	return c
 }
 
 // buildLoop builds whichever engine the spec selects: the default agent, or the

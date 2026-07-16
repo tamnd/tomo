@@ -49,6 +49,27 @@ type Agent struct {
 	// run ends. A positive value is a hard budget, used to bound a probe or A/B run
 	// so the loop stops after a set number of rounds instead of playing out in full.
 	MaxRounds int
+	// CompactTail sets the recent-window floor for send-time history compaction:
+	// the last CompactTail tool-result rounds are always sent verbatim. A coding
+	// loop re-sends the whole transcript every round, so a large tool result
+	// stays on the wire long after the model has moved past it, and on a provider
+	// that does not cache the prefix that re-send is the biggest share of a long
+	// run's cost. With CompactBudgetTokens zero, a positive CompactTail elides
+	// every result above CompactMinBytes older than the window. With both zero,
+	// the default, the full history is sent and the loop behaves exactly as
+	// before. The stored transcript is never changed: this shapes only the wire.
+	CompactTail int
+	// CompactBudgetTokens keys compaction to the model's context length: while
+	// the estimated transcript fits the budget nothing is elided, so a short task
+	// or a large-context model pays no quality cost; only the overflow is shed,
+	// oldest-first. Set it to a fraction of the model's context window, leaving
+	// room for the reply and the next few tool results. Zero disables the budget
+	// (see CompactTail for unconditional shedding).
+	CompactBudgetTokens int
+	// CompactMinBytes is the size a tool result must exceed before an older copy
+	// of it is elided, so small results a model often refers back to are kept.
+	// Zero falls back to defaultCompactMinBytes when compaction is on.
+	CompactMinBytes int
 }
 
 // maxToolResult is the backstop cap on a single tool result. The builtin tools
@@ -164,7 +185,7 @@ func (a *Agent) Turn(ctx context.Context, history []provider.Message, user provi
 		req := provider.Request{
 			Model:    a.Model,
 			System:   a.System,
-			Messages: concat(history, turn),
+			Messages: a.compactSend(concat(history, turn)),
 			Tools:    a.Tools.Defs(),
 		}
 		resp, err := a.stream(ctx, req, sink)
