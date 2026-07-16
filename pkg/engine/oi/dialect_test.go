@@ -135,6 +135,28 @@ func TestParseExecuteXMLLangTag(t *testing.T) {
 	}
 }
 
+// parseExecuteXML must salvage the Hermes <function=NAME><parameter=...> tool call
+// a default-dialect model reaches for, mimo-v2.5-free's real shape:
+// <function=code_interpreter><parameter=code> carrying python. The code_interpreter
+// name selects python, and each function in a reply yields its own block.
+func TestParseExecuteXMLFunctionParameterShape(t *testing.T) {
+	reply := "<tool_call>\n<function=code_interpreter>\n<parameter=code>\nimport os\nprint(os.getcwd())\n</parameter>\n</function>\n</tool_call>"
+	b := parseExecuteXML(reply)
+	if len(b) != 1 || b[0].lang != "python" || b[0].code != "import os\nprint(os.getcwd())" {
+		t.Fatalf("code_interpreter costume: %+v", b)
+	}
+	// A bash-named function runs shell, and two calls in one reply give two blocks.
+	two := "<function=execute_bash><parameter=command>ls</parameter></function>" +
+		"<function=code_interpreter><parameter=code>print(1)</parameter></function>"
+	if b := parseExecuteXML(two); len(b) != 2 || b[0].lang != "shell" || b[0].code != "ls" || b[1].lang != "python" || b[1].code != "print(1)" {
+		t.Fatalf("mixed functions: %+v", b)
+	}
+	// A <function=> with no <parameter=> body is not an action and yields nothing.
+	if b := parseExecuteXML("<function=code_interpreter></function>"); len(b) != 0 {
+		t.Fatalf("empty function salvaged: %+v", b)
+	}
+}
+
 // The markdown dialect prefers a real fence and only falls back to the XML
 // salvage when the reply carries no fence at all, so a fenced reply is never
 // re-read by the salvage and a fence-less tool call is still recovered.

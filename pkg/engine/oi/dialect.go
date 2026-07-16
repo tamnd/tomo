@@ -228,13 +228,14 @@ func bareLangLine(body string) (lang, rest string) {
 //	grep -rn "_parse_url" /work/
 //	</code></pre>
 //
-// Neither is a Markdown fence, the Hermes <function=>/<parameter=> shape, or a
-// JSON object, so no existing dialect reads it and the action is dropped, ending
-// the turn on nothing done. Each shape is anchored on its wrapper (<tool_call> or
-// <pre>) so a stray <code> in prose never triggers it, and this is only ever
-// reached as the markdown dialect's no-fence fallback, so a model that writes
-// fences is unaffected. A bare <language> tag or first-line language selects the
-// language, defaulting to shell the way a bare fence does.
+// A third shape is the Hermes <function=NAME><parameter=...> tool call, which
+// mimo-v2.5-free reaches for on the default dialect. None is a Markdown fence, so
+// no fenced parser reads it and the action is dropped, ending the turn on nothing
+// done. Each shape is anchored on its wrapper (<tool_call>, <pre>, or <function=>)
+// so a stray <code> in prose never triggers it, and this is only ever reached as
+// the markdown dialect's no-fence fallback, so a model that writes fences is
+// unaffected. A bare <language> tag or first-line language selects the language,
+// defaulting to shell the way a bare fence does.
 func parseExecuteXML(reply string) []block {
 	var out []block
 	for _, tc := range xmlToolCallRe.FindAllStringSubmatch(reply, -1) {
@@ -279,22 +280,15 @@ func parseExecuteXML(reply string) []block {
 		}
 		out = append(out, block{lang: strings.ToLower(lt[1]), code: code})
 	}
-	return out
-}
-
-// parseXMLToolCall reads the Hermes/Qwen XML tool-call syntax. Each <function=X>
-// names the action and each <parameter=...> holds its code; the function name
-// selects the language (a bash/shell/sh name runs shell, a python name runs
-// python). The parameter body is trimmed of the leading and trailing newlines
-// the format pads it with.
-func parseXMLToolCall(reply string) []block {
-	var out []block
+	// The Hermes <function=NAME><parameter=...> shape from a model on the default
+	// Markdown dialect. mimo-v2.5-free reaches for <function=code_interpreter>
+	// <parameter=code> instead of a fence, and the salvages above miss it: its code
+	// lives in a <parameter=code>, not the bare <code> the <tool_call> salvage reads.
+	// The routed xmltoolcall dialect owns this shape for the models that always speak
+	// it; here it is only the no-fence fallback for a default model that reaches for
+	// it, so its action is run instead of dropped. Anchored on <function=...> so a
+	// stray tag in prose is ignored.
 	for _, fn := range xmlFuncRe.FindAllStringSubmatch(reply, -1) {
-		name := strings.ToLower(fn[1])
-		lang := "shell"
-		if strings.Contains(name, "python") || strings.Contains(name, "ipython") {
-			lang = "python"
-		}
 		p := xmlParamRe.FindStringSubmatch(fn[2])
 		if p == nil {
 			continue
@@ -303,7 +297,39 @@ func parseXMLToolCall(reply string) []block {
 		if strings.TrimSpace(code) == "" {
 			continue
 		}
-		out = append(out, block{lang: lang, code: code})
+		out = append(out, block{lang: langForFunc(fn[1]), code: code})
 	}
 	return out
+}
+
+// parseXMLToolCall reads the Hermes/Qwen XML tool-call syntax. Each <function=X>
+// names the action and each <parameter=...> holds its code; the function name
+// selects the language. The parameter body is trimmed of the leading and trailing
+// newlines the format pads it with.
+func parseXMLToolCall(reply string) []block {
+	var out []block
+	for _, fn := range xmlFuncRe.FindAllStringSubmatch(reply, -1) {
+		p := xmlParamRe.FindStringSubmatch(fn[2])
+		if p == nil {
+			continue
+		}
+		code := strings.Trim(p[1], "\n")
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		out = append(out, block{lang: langForFunc(fn[1]), code: code})
+	}
+	return out
+}
+
+// langForFunc maps an XML tool-call function name to a block language. A name that
+// mentions python (execute_python, ipython) or a code interpreter runs python;
+// every other name, a bare execute or a bash/shell one, runs shell, the same
+// default a bare Markdown fence takes.
+func langForFunc(name string) string {
+	name = strings.ToLower(name)
+	if strings.Contains(name, "python") || strings.Contains(name, "ipython") || strings.Contains(name, "code_interpreter") {
+		return "python"
+	}
+	return "shell"
 }
