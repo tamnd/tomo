@@ -103,7 +103,11 @@ var actingMarkers = []string{
 	// Since this branch runs only after every dialect and the fenceless salvage
 	// found nothing, the presence of a tool-call skeleton means the model tried to
 	// act and the action was lost, which is the hallucination the nudge corrects.
-	"<tool_call>", "<tool_name>", "<parameter name", "<function=",
+	// The opening tag is matched as a prefix so an attributed call and the plural
+	// wrapper both count: deepseek-v4-flash-free quit in one round on <tool_calls>
+	// with a <tool_call kind="text_write"> that carried only narration, which a
+	// literal "<tool_call>" would have missed.
+	"<tool_call", "<tool_name", "<parameter name", "<function=",
 }
 
 // The dropped-block guard catches a distinct code-as-action failure: the model

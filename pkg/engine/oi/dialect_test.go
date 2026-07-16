@@ -157,6 +157,49 @@ func TestParseExecuteXMLFunctionParameterShape(t *testing.T) {
 	}
 }
 
+// A <function=NAME> call to a tool the engine does not provide is not code and
+// must not be salvaged. mimo-v2.5-free reaches for <function=editor> with a
+// command verb ("view") as its first parameter; running that verb as shell
+// launches vim in read-only mode, which hangs with no terminal until the run
+// deadline. Only an execution function (execute/bash/python/code_interpreter) is
+// turned into a block; an editor or file-viewer call yields nothing.
+func TestParseExecuteXMLIgnoresNonExecFunction(t *testing.T) {
+	editor := "<tool_call>\n<function=editor>\n<parameter=command>view</parameter>\n" +
+		"<parameter=path>/tmp/probe-1</parameter>\n</function>\n</tool_call>"
+	if b := parseExecuteXML(editor); len(b) != 0 {
+		t.Fatalf("editor tool call salvaged as code: %+v", b)
+	}
+	// A real execution call in the same reply is still salvaged; only the editor
+	// call is dropped.
+	mixed := editor + "<function=execute_bash><parameter=command>ls</parameter></function>"
+	if b := parseExecuteXML(mixed); len(b) != 1 || b[0].lang != "shell" || b[0].code != "ls" {
+		t.Fatalf("mixed editor+exec: %+v", b)
+	}
+	// The routed dialect that owns the tool-call shape drops the editor call too,
+	// so a model that always speaks tool calls cannot hang on a file-viewer verb.
+	if b := parseXMLToolCall(editor); len(b) != 0 {
+		t.Fatalf("routed dialect salvaged editor call: %+v", b)
+	}
+	if b := parseXMLToolCall("<function=str_replace_editor><parameter=command>create</parameter></function>"); len(b) != 0 {
+		t.Fatalf("routed dialect salvaged str_replace_editor: %+v", b)
+	}
+}
+
+// isExecFunc admits the code-execution names a tool-call model uses and rejects
+// the file and editor tools this engine does not run.
+func TestIsExecFunc(t *testing.T) {
+	for _, name := range []string{"execute", "execute_bash", "execute_python", "code_interpreter", "python", "bash", "shell", "run", "sh", "ipython"} {
+		if !isExecFunc(name) {
+			t.Errorf("isExecFunc(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"editor", "str_replace_editor", "view", "create", "read_file", "write_file", "browser", "search"} {
+		if isExecFunc(name) {
+			t.Errorf("isExecFunc(%q) = true, want false", name)
+		}
+	}
+}
+
 // The markdown dialect prefers a real fence and only falls back to the XML
 // salvage when the reply carries no fence at all, so a fenced reply is never
 // re-read by the salvage and a fence-less tool call is still recovered.
