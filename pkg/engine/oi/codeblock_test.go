@@ -54,6 +54,49 @@ func TestParseBlocksIgnoresProseWithoutFence(t *testing.T) {
 	}
 }
 
+func TestParseBlocksGluedCloseOpen(t *testing.T) {
+	// A cheap model often writes the closing fence and the next opening fence with
+	// nothing between them, so "```" + "```sh" arrives as a single "``````sh" line.
+	// Both blocks must still be recovered, or the trailing fence and the next
+	// block's code get swallowed as this block's body and fail to run.
+	reply := "```sh\nls\n``````python\nprint(1)\n```"
+	blocks := parseBlocks(reply)
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 (%+v)", len(blocks), blocks)
+	}
+	if blocks[0].lang != "sh" || blocks[0].code != "ls" {
+		t.Errorf("block 0 = %+v", blocks[0])
+	}
+	if blocks[1].lang != "python" || blocks[1].code != "print(1)" {
+		t.Errorf("block 1 = %+v", blocks[1])
+	}
+}
+
+func TestParseBlocksGluedChain(t *testing.T) {
+	// Three blocks glued back to back, the shape the smolagents trace showed.
+	reply := "```sh\na\n``````sh\nb\n``````python\nc\n```"
+	blocks := parseBlocks(reply)
+	if len(blocks) != 3 {
+		t.Fatalf("blocks = %d, want 3 (%+v)", len(blocks), blocks)
+	}
+	if blocks[0].code != "a" || blocks[1].code != "b" || blocks[2].code != "c" {
+		t.Errorf("codes = %q %q %q", blocks[0].code, blocks[1].code, blocks[2].code)
+	}
+	if blocks[2].lang != "python" {
+		t.Errorf("block 2 lang = %q, want python", blocks[2].lang)
+	}
+}
+
+func TestParseBlocksBareLongCloseIsNotReopen(t *testing.T) {
+	// A bare over-long run with no language tag is just a long close, not a glued
+	// open, so nothing after it is captured as a new block's code.
+	reply := "```python\nprint(1)\n``````\ntrailing prose"
+	blocks := parseBlocks(reply)
+	if len(blocks) != 1 || blocks[0].code != "print(1)" {
+		t.Fatalf("blocks = %+v", blocks)
+	}
+}
+
 func TestParseBlocksTildeFence(t *testing.T) {
 	reply := "~~~python\nprint(1)\n~~~"
 	blocks := parseBlocks(reply)

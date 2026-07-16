@@ -11,11 +11,13 @@ import (
 // maxOutput caps the combined output fed back for one code block. Open
 // Interpreter truncates execution output so a runaway command (a full test log,
 // a `print` in a loop) cannot flood the context and get re-sent on every later
-// round. Following OI, it keeps the tail rather than the head: a traceback's
-// cause and a test run's pass/fail summary both land at the end, so the last
-// bytes are the ones worth carrying. OI's own cap is 2800 characters; a coding
-// task leans on longer test output, so the cap here is larger but the tail-keep
-// rule and the self-summarize hint are the same.
+// round. Following OI's truncate_output, it keeps the head and the tail and
+// elides the middle: a command front-loads context (a traceback's originating
+// frame, a test session header) and back-loads the verdict (the exception type,
+// the pass/fail summary), so both ends carry signal a tail-only cut would throw
+// away. OI's own cap is 2800 characters; a coding task leans on longer test
+// output, so the cap here is larger but the head-plus-tail rule and the
+// self-summarize hint are the same.
 const maxOutput = 6 * 1024
 
 // language maps a fence tag to the canonical language the engine runs, and
@@ -68,13 +70,24 @@ func runBlock(ctx context.Context, box sandbox.Sandbox, b block) (string, bool) 
 	return out, false
 }
 
-// clampOutput bounds one execution's output, keeping the tail and prepending a
-// notice, the way OI's truncate_output does, so a long log cannot dominate the
-// re-sent transcript and the model is nudged to narrow the command itself.
+// clampOutput bounds one execution's output, keeping the head and the tail and
+// eliding the middle on line boundaries, the way OI's truncate_output and cx's
+// clampResult do, so a long log cannot dominate the re-sent transcript while the
+// error origin at the head and the verdict at the tail both survive, and the
+// model is nudged to narrow the command itself.
 func clampOutput(s string) string {
 	if len(s) <= maxOutput {
 		return s
 	}
-	notice := fmt.Sprintf("[output truncated to the last %d bytes; re-run against a smaller target or pipe through tail/grep to see the rest]\n\n", maxOutput)
-	return notice + s[len(s)-maxOutput:]
+	head := maxOutput * 3 / 4
+	tail := maxOutput - head
+	if i := strings.LastIndexByte(s[:head], '\n'); i > 0 {
+		head = i
+	}
+	tailStart := len(s) - tail
+	if i := strings.IndexByte(s[tailStart:], '\n'); i >= 0 {
+		tailStart += i + 1
+	}
+	notice := fmt.Sprintf("\n\n… [%d bytes elided; re-run against a smaller target or pipe through tail/grep for the rest] …\n\n", tailStart-head)
+	return s[:head] + notice + s[tailStart:]
 }

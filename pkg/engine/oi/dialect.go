@@ -1,0 +1,309 @@
+package oi
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+)
+
+// A dialect is how a given model natively expresses "run this code". The Open
+// Interpreter idea is one action, a code block, but models disagree on the
+// syntax of that block even when the prompt asks for Markdown: a base model
+// writes a Markdown fence, a tool-tuned model reaches for JSON, a Hermes-family
+// model emits an XML tool call. A single parser extracts the action from one of
+// them and silently drops it from the rest, so the engine carries a dialect per
+// model and parses whatever that model actually produces.
+//
+// This is the per-model harness: meet the model where it is. Adding a model is
+// adding one registry entry, and if its syntax is new, one parse function, which
+// is the seam a later fine-tune tunes at.
+type dialect struct {
+	// name identifies the dialect in a trace.
+	name string
+	// parse lifts the runnable blocks out of a reply in the model's own syntax.
+	parse func(reply string) []block
+	// hint is appended to the system prompt to ask the model for the syntax this
+	// dialect parses. Empty leaves the base prompt's Markdown instruction alone,
+	// which is right for a model that already writes Markdown.
+	hint string
+}
+
+// markdownDialect is the default: the lenient Markdown fence parser, which also
+// accepts a fence glued to the end of a prose line and an unclosed fence at end
+// of a truncated reply. It fits a model that writes code the way OI's own target
+// models do. When a reply carries no fence at all it falls back to the generic
+// execute tool-call salvage, which recovers the action a tool-tuned model
+// sometimes emits as an XML <tool_call> even though the prompt asked for a fence.
+var markdownDialect = dialect{
+	name:  "markdown",
+	parse: parseMarkdown,
+}
+
+// parseMarkdown reads the Markdown fences and, only when there are none, salvages
+// a generic execute XML tool call. A default-dialect model (deepseek among them)
+// writes a fence on almost every turn, so the fence parser carries the work and
+// the salvage never runs; but that model intermittently reaches for its native
+// tool-call syntax instead, and dropping that action ends the turn on nothing.
+// The fallback recovers it without touching the dominant fenced path or the
+// system prompt, the same meet-the-model-where-it-is repair the glued-fence split
+// is.
+func parseMarkdown(reply string) []block {
+	if b := parseBlocks(reply); len(b) > 0 {
+		return b
+	}
+	return parseExecuteXML(reply)
+}
+
+// toolJSONDialect fits a model fine-tuned toward structured tool output, which
+// emits a JSON object naming the code to run rather than a Markdown fence. It
+// reads the shape observed from north-mini-code-free,
+// {"contents":[{"text":"...","language":"..."}]}, and its common cousins where
+// the code lives under "code"/"command"/"input" and the language under
+// "language"/"lang". A reply that is not such an object yields no block.
+var toolJSONDialect = dialect{
+	name:  "tooljson",
+	parse: parseToolJSON,
+	hint:  "\n\nEmit each action as a single JSON object and nothing else: {\"contents\":[{\"language\":\"python|sh\",\"text\":\"<code>\"}]}. Do not wrap it in Markdown. To finish, reply with plain prose and no JSON object.",
+}
+
+// xmlToolCallDialect fits the Hermes and Qwen family, which emit an XML tool call
+// like <tool_call><function=execute_bash><parameter=command>...</parameter>
+// </function></tool_call>. It maps the bash/shell function to a shell block and
+// a python function to a python block, reading the code from the command/code
+// parameter.
+var xmlToolCallDialect = dialect{
+	name:  "xmltoolcall",
+	parse: parseXMLToolCall,
+	hint:  "\n\nEmit each action as a single <tool_call> with a <function=execute_bash> or <function=execute_python> and a <parameter=command> holding the code. To finish, reply with plain prose and no tool call.",
+}
+
+// dialectFor picks the dialect for a model by family, matching on the bare model
+// id (any provider/ prefix stripped). An unknown model gets Markdown, the safe
+// default: a model that writes fences is parsed correctly, and one that does not
+// simply produces no block and ends the turn, the same as before dialects.
+func dialectFor(model string) dialect {
+	id := model
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		id = id[i+1:]
+	}
+	id = strings.ToLower(id)
+	switch {
+	case strings.Contains(id, "north-mini"):
+		return toolJSONDialect
+	case strings.Contains(id, "nemotron"), strings.Contains(id, "hermes"), strings.Contains(id, "qwen"):
+		return xmlToolCallDialect
+	default:
+		return markdownDialect
+	}
+}
+
+// jsonAction is the union of the field names the tool-JSON dialects use for a
+// piece of code and its language, so one struct reads north-mini's shape and its
+// near neighbours.
+type jsonAction struct {
+	Contents []jsonAction `json:"contents"`
+	Language string       `json:"language"`
+	Lang     string       `json:"lang"`
+	Text     string       `json:"text"`
+	Code     string       `json:"code"`
+	Command  string       `json:"command"`
+	Input    string       `json:"input"`
+}
+
+func (a jsonAction) codeOf() string {
+	for _, s := range []string{a.Text, a.Code, a.Command, a.Input} {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func (a jsonAction) langOf() string {
+	if a.Language != "" {
+		return a.Language
+	}
+	return a.Lang
+}
+
+// parseToolJSON reads the first JSON object in a reply and lifts the code it
+// names. It tolerates the object being wrapped in a Markdown fence (a tool-tuned
+// model sometimes does both) and prose around it, by scanning for the outermost
+// brace-balanced span and decoding that.
+func parseToolJSON(reply string) []block {
+	span := firstJSONObject(reply)
+	if span == "" {
+		return nil
+	}
+	var a jsonAction
+	if err := json.Unmarshal([]byte(span), &a); err != nil {
+		return nil
+	}
+	var out []block
+	add := func(x jsonAction) {
+		if code := x.codeOf(); code != "" {
+			out = append(out, block{lang: strings.ToLower(x.langOf()), code: code})
+		}
+	}
+	if len(a.Contents) > 0 {
+		for _, c := range a.Contents {
+			add(c)
+		}
+	} else {
+		add(a)
+	}
+	return out
+}
+
+// firstJSONObject returns the first brace-balanced object span in s, ignoring
+// braces inside strings, or empty if there is none.
+func firstJSONObject(s string) string {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return ""
+	}
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case esc:
+			esc = false
+		case c == '\\' && inStr:
+			esc = true
+		case c == '"':
+			inStr = !inStr
+		case inStr:
+		case c == '{':
+			depth++
+		case c == '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
+var (
+	xmlFuncRe  = regexp.MustCompile(`(?s)<function=([a-zA-Z0-9_]+)>(.*?)</function>`)
+	xmlParamRe = regexp.MustCompile(`(?s)<parameter=[a-zA-Z0-9_]+>(.*?)</parameter>`)
+
+	xmlToolCallRe = regexp.MustCompile(`(?s)<tool_call>(.*?)</tool_call>`)
+	xmlCodeRe     = regexp.MustCompile(`(?s)<code>(.*?)</code>`)
+	xmlLangRe     = regexp.MustCompile(`(?s)<language>(.*?)</language>`)
+	htmlPreCodeRe = regexp.MustCompile(`(?s)<pre>\s*<code[^>]*>(.*?)</code>\s*</pre>`)
+	langTagRe     = regexp.MustCompile(`(?s)<(shell|sh|bash|zsh|python|py|python3)>(.*?)</(shell|sh|bash|zsh|python|py|python3)>`)
+)
+
+// bareLangLine reports whether a code body opens with a lone language word on its
+// own line ("shell\n<code>"), the way an HTML <pre><code> block carries the tag a
+// Markdown fence would put on the opening line. When it does, it returns that tag
+// and the remaining code; otherwise the whole body is code with no tag.
+func bareLangLine(body string) (lang, rest string) {
+	nl := strings.IndexByte(body, '\n')
+	if nl < 0 {
+		return "", body
+	}
+	first := strings.ToLower(strings.TrimSpace(body[:nl]))
+	switch first {
+	case "python", "py", "python3", "sh", "shell", "bash", "zsh":
+		return first, body[nl+1:]
+	}
+	return "", body
+}
+
+// parseExecuteXML salvages a runnable action a tool-tuned model emits even when
+// the prompt asked for a Markdown fence. deepseek-v4-flash-free does this in two
+// shapes on the turns it does not write a fence. One is its native execute tool
+// call, an XML <tool_call> carrying a <language> and a <code>:
+//
+//	<tool_call><tool_name>execute</tool_name>
+//	<tool_args><language>sh</language><code>...</code></tool_args></tool_call>
+//
+// The other is an HTML <pre><code> block with the language as the first line,
+// with the narration folded into <details> prose around it:
+//
+//	<pre><code>shell
+//	grep -rn "_parse_url" /work/
+//	</code></pre>
+//
+// Neither is a Markdown fence, the Hermes <function=>/<parameter=> shape, or a
+// JSON object, so no existing dialect reads it and the action is dropped, ending
+// the turn on nothing done. Each shape is anchored on its wrapper (<tool_call> or
+// <pre>) so a stray <code> in prose never triggers it, and this is only ever
+// reached as the markdown dialect's no-fence fallback, so a model that writes
+// fences is unaffected. A bare <language> tag or first-line language selects the
+// language, defaulting to shell the way a bare fence does.
+func parseExecuteXML(reply string) []block {
+	var out []block
+	for _, tc := range xmlToolCallRe.FindAllStringSubmatch(reply, -1) {
+		inner := tc[1]
+		cm := xmlCodeRe.FindStringSubmatch(inner)
+		if cm == nil {
+			continue
+		}
+		code := strings.Trim(cm[1], "\n")
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		lang := "sh"
+		if lm := xmlLangRe.FindStringSubmatch(inner); lm != nil {
+			if t := strings.TrimSpace(lm[1]); t != "" {
+				lang = t
+			}
+		}
+		out = append(out, block{lang: strings.ToLower(lang), code: code})
+	}
+	for _, pc := range htmlPreCodeRe.FindAllStringSubmatch(reply, -1) {
+		lang, body := bareLangLine(strings.Trim(pc[1], "\n"))
+		code := strings.Trim(body, "\n")
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		if lang == "" {
+			lang = "sh"
+		}
+		out = append(out, block{lang: lang, code: code})
+	}
+	// A language-named tag: the model names the fence after the language itself,
+	// <shell>find ...</shell> or <python>...</python>. The open and close tag must
+	// match, so a stray <shell> in prose with no close does not swallow the rest.
+	for _, lt := range langTagRe.FindAllStringSubmatch(reply, -1) {
+		if lt[1] != lt[3] {
+			continue
+		}
+		code := strings.Trim(lt[2], "\n")
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		out = append(out, block{lang: strings.ToLower(lt[1]), code: code})
+	}
+	return out
+}
+
+// parseXMLToolCall reads the Hermes/Qwen XML tool-call syntax. Each <function=X>
+// names the action and each <parameter=...> holds its code; the function name
+// selects the language (a bash/shell/sh name runs shell, a python name runs
+// python). The parameter body is trimmed of the leading and trailing newlines
+// the format pads it with.
+func parseXMLToolCall(reply string) []block {
+	var out []block
+	for _, fn := range xmlFuncRe.FindAllStringSubmatch(reply, -1) {
+		name := strings.ToLower(fn[1])
+		lang := "shell"
+		if strings.Contains(name, "python") || strings.Contains(name, "ipython") {
+			lang = "python"
+		}
+		p := xmlParamRe.FindStringSubmatch(fn[2])
+		if p == nil {
+			continue
+		}
+		code := strings.Trim(p[1], "\n")
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		out = append(out, block{lang: lang, code: code})
+	}
+	return out
+}
