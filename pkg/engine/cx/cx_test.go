@@ -247,3 +247,34 @@ func TestRetuneOverridesDescriptionsOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestClampResultKeepsHeadAndTail(t *testing.T) {
+	// A verify command front-loads the invocation and back-loads the failure. The
+	// clamp must keep both ends so the model still sees the assertion that failed,
+	// not just the boilerplate at the top.
+	head := "$ pytest tests/test_x.py\n" + strings.Repeat("passed a boring line\n", 6000)
+	tail := "\nE   AssertionError: expected 3, got 4\nFAILED tests/test_x.py::test_x\n"
+	out := clampResult(head + tail)
+	if len(out) >= len(head+tail) {
+		t.Fatalf("oversized output was not clamped: %d bytes", len(out))
+	}
+	if len(out) > maxToolResult+128 {
+		t.Fatalf("clamped output %d exceeds cap %d", len(out), maxToolResult)
+	}
+	if !strings.Contains(out, "$ pytest tests/test_x.py") {
+		t.Error("clamp dropped the head (the command that was run)")
+	}
+	if !strings.Contains(out, "AssertionError: expected 3, got 4") || !strings.Contains(out, "FAILED tests/test_x.py::test_x") {
+		t.Error("clamp dropped the tail (the failure the model must read)")
+	}
+	if !strings.Contains(out, "bytes elided") {
+		t.Error("clamp did not mark the elision")
+	}
+}
+
+func TestClampResultPassesSmallOutputThrough(t *testing.T) {
+	s := "small output, nothing to elide"
+	if got := clampResult(s); got != s {
+		t.Fatalf("small output changed: %q", got)
+	}
+}

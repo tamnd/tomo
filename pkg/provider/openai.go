@@ -3,10 +3,13 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -121,6 +124,27 @@ func oaMessages(req Request) ([]oaMessage, error) {
 	return out, nil
 }
 
+// promptCacheKey derives a stable cache-routing hint from the parts of a request
+// that stay byte-identical across a run: the system prompt and the tool set. It
+// changes only when that static prefix changes, so every round of one agent
+// config shares a key and routes to the same cache, while a different agent (or a
+// trimmed prompt) gets its own. It is a short hash, not the prompt itself, so it
+// stays small and leaks no prompt content. Empty when there is nothing stable to
+// key on, which leaves the field off.
+func promptCacheKey(req Request) string {
+	if req.System == "" && len(req.Tools) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	// A hash never fails a write, so the returned error is safe to drop.
+	h.Write([]byte(req.System))
+	for _, t := range req.Tools {
+		h.Write([]byte("\x00" + t.Name + "\x00" + t.Description))
+		h.Write(t.Schema)
+	}
+	return "tomo-" + hex.EncodeToString(h.Sum(nil)[:8])
+}
+
 // Stream implements Provider.
 func (o *OpenAI) Stream(ctx context.Context, req Request, emit func(Event)) (*Response, error) {
 	msgs, err := oaMessages(req)
@@ -149,6 +173,17 @@ func (o *OpenAI) Stream(ctx context.Context, req Request, emit func(Event)) (*Re
 		}
 		body["tools"] = tools
 	}
+	// Route requests that share the byte-identical system+tools prefix to the same
+	// cache-holding backend. Automatic prompt caching is per-machine, so without a
+	// stable routing hint a provider scatters an agent's rounds across machines and
+	// the shared prefix cache-misses even though the bytes match. This is the field
+	// OpenAI documents for that; compat servers that do not recognize it ignore the
+	// extra key. It carries no content that reaches the model, so it cannot change
+	// the output, only where the request lands. TOMO_PROMPT_CACHE_KEY_OFF is an
+	// escape hatch for a provider that rejects the field, and the off arm of an A/B.
+	if key := promptCacheKey(req); key != "" && os.Getenv("TOMO_PROMPT_CACHE_KEY_OFF") == "" {
+		body["prompt_cache_key"] = key
+	}
 
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -172,13 +207,50 @@ func (o *OpenAI) Stream(ctx context.Context, req Request, emit func(Event)) (*Re
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		e := fmt.Errorf("openai: %s: %s", resp.Status, strings.TrimSpace(string(msg)))
-		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		body := strings.TrimSpace(string(msg))
+		e := fmt.Errorf("openai: %s: %s", resp.Status, body)
+		if retryableStatus(resp.StatusCode, body) {
 			return nil, asTransient(e)
 		}
 		return nil, e
 	}
 	return parseOpenAIStream(resp.Body, emit)
+}
+
+// retryableStatus reports whether a non-200 chat response is worth retrying. A
+// 5xx or a 429 always is. A 4xx normally is not, since it means the request was
+// rejected, except when the body shows the gateway itself could not reach the
+// upstream model rather than the request being malformed: some OpenAI-compatible
+// gateways (opencode zen among them) forward a flaky upstream hiccup as a 400
+// carrying "Upstream request failed", which a retry clears. A genuine bad-request
+// 400 names the field it rejected and does not match, so it still fails fast.
+func retryableStatus(code int, body string) bool {
+	if code >= 500 || code == http.StatusTooManyRequests {
+		return true
+	}
+	return gatewayUpstreamFailure(body)
+}
+
+// gatewayUpstreamFailure reports whether a response body is an OpenAI-compatible
+// gateway reporting that it could not reach the upstream model, as opposed to
+// rejecting the request itself. These phrases name a forwarding failure, which is
+// transient, and never appear in a request-shape rejection.
+func gatewayUpstreamFailure(body string) bool {
+	b := strings.ToLower(body)
+	for _, s := range []string{
+		"upstream request failed",
+		"upstream error",
+		"upstream connect error",
+		"bad gateway",
+		"gateway timeout",
+		"service unavailable",
+		"temporarily unavailable",
+	} {
+		if strings.Contains(b, s) {
+			return true
+		}
+	}
+	return false
 }
 
 type oaChunk struct {

@@ -54,10 +54,12 @@ func newRoot() *cobra.Command {
 	// shows one canonical flag, but the muscle-memory name still works.
 	root.PersistentFlags().Bool("dangerously-skip-permissions", false, "alias for --yolo")
 	_ = root.PersistentFlags().MarkHidden("dangerously-skip-permissions")
-	// Which agent loop to run. The default engine and the codex-style cx engine
-	// are independent: same tools and provider, different system prompt, tool
-	// descriptions, and loop. Empty falls back to TOMO_ENGINE, then to the default.
-	root.PersistentFlags().String("engine", "", "agent loop: agent (default), cx (codex-style), or cx-offline (cx, checked-out tree only)")
+	// Which agent loop to run. The default engine, the codex-style cx engine, and
+	// the Open Interpreter oi engine are independent: same provider, different
+	// system prompt, action surface, and loop. cx and the default call structured
+	// tools; oi has the model write code blocks it runs. Empty falls back to
+	// TOMO_ENGINE, then to the default.
+	root.PersistentFlags().String("engine", "", "agent loop: agent (default), cx (codex-style), cx-offline (cx, checked-out tree only), or oi (Open Interpreter code-as-action)")
 	root.Flags().StringVarP(&prompt, "prompt", "p", "", "run a single prompt non-interactively and exit")
 	root.Flags().StringVarP(&model, "model", "m", "", "provider/model (default from config)")
 	root.AddCommand(newChatCmd())

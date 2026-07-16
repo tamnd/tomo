@@ -13,6 +13,7 @@ package cx
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tamnd/tomo/pkg/agent"
@@ -39,6 +40,16 @@ type Engine struct {
 	// run ends. A positive value is a hard budget, used to bound a probe or A/B run
 	// so the loop stops after a set number of rounds instead of playing out in full.
 	MaxRounds int
+	// Compaction shapes the transcript put on the wire so an older tool result is
+	// not re-sent whole on every later round (see compact.go). All three default to
+	// zero, which leaves compaction off and the full transcript sent as before, so
+	// a plain build is unchanged. CompactTail is the recent-window floor kept
+	// verbatim; CompactMinBytes is the size a result must exceed to be eligible;
+	// CompactBudgetTokens, when positive, only sheds while the transcript estimate
+	// exceeds that budget (context-length-aware), else shedding is unconditional.
+	CompactTail         int
+	CompactMinBytes     int
+	CompactBudgetTokens int
 }
 
 // maxToolResult is the backstop cap on a single tool result. The builtin tools
@@ -47,6 +58,27 @@ type Engine struct {
 // and re-sent on every later round of the turn. It sits just above the builtin
 // cap so a builtin result passes through untouched.
 const maxToolResult = 48 * 1024
+
+// clampResult bounds an oversized tool result the same way the builtin tools
+// bound their own: keep the head and the tail and elide the middle, on line
+// boundaries. A verify command front-loads the command and back-loads the
+// failure (the assertion, the traceback, the summary), so keeping both ends
+// preserves the signal a head-only cut would throw away, at no extra tokens.
+func clampResult(s string) string {
+	if len(s) <= maxToolResult {
+		return s
+	}
+	head := maxToolResult * 3 / 4
+	tail := maxToolResult - head
+	if i := strings.LastIndexByte(s[:head], '\n'); i > 0 {
+		head = i
+	}
+	tailStart := len(s) - tail
+	if i := strings.IndexByte(s[tailStart:], '\n'); i >= 0 {
+		tailStart += i + 1
+	}
+	return s[:head] + fmt.Sprintf("\n\n… [%d bytes elided] …\n\n", tailStart-head) + s[tailStart:]
+}
 
 // maxCallRetries is how many extra times a single model call is retried on a
 // transient upstream failure. Re-issuing sends the same history, so it is cheap
@@ -119,7 +151,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 		req := provider.Request{
 			Model:    e.Model,
 			System:   e.System,
-			Messages: concat(history, turn),
+			Messages: e.compactSend(concat(history, turn)),
 			Tools:    e.Tools.Defs(),
 		}
 		resp, err := e.stream(ctx, req, sink)
@@ -252,9 +284,7 @@ func (e *Engine) runTool(ctx context.Context, b provider.Block, sink agent.Sink)
 	if e.Gate != nil {
 		e.Gate.Ingested(t.Class, isErr)
 	}
-	if len(out) > maxToolResult {
-		out = out[:maxToolResult] + "\n[truncated]"
-	}
+	out = clampResult(out)
 	if sink != nil {
 		sink.ToolEnd(b.Name, out, isErr)
 	}
