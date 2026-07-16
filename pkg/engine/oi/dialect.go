@@ -289,6 +289,9 @@ func parseExecuteXML(reply string) []block {
 	// it, so its action is run instead of dropped. Anchored on <function=...> so a
 	// stray tag in prose is ignored.
 	for _, fn := range xmlFuncRe.FindAllStringSubmatch(reply, -1) {
+		if !isExecFunc(fn[1]) {
+			continue
+		}
 		p := xmlParamRe.FindStringSubmatch(fn[2])
 		if p == nil {
 			continue
@@ -305,10 +308,15 @@ func parseExecuteXML(reply string) []block {
 // parseXMLToolCall reads the Hermes/Qwen XML tool-call syntax. Each <function=X>
 // names the action and each <parameter=...> holds its code; the function name
 // selects the language. The parameter body is trimmed of the leading and trailing
-// newlines the format pads it with.
+// newlines the format pads it with. Only a code-execution function is read: this
+// engine's one action is running code, so a call to a tool it does not provide
+// (an editor, a file viewer) is not turned into a shell command.
 func parseXMLToolCall(reply string) []block {
 	var out []block
 	for _, fn := range xmlFuncRe.FindAllStringSubmatch(reply, -1) {
+		if !isExecFunc(fn[1]) {
+			continue
+		}
 		p := xmlParamRe.FindStringSubmatch(fn[2])
 		if p == nil {
 			continue
@@ -332,4 +340,24 @@ func langForFunc(name string) string {
 		return "python"
 	}
 	return "shell"
+}
+
+// isExecFunc reports whether an XML tool-call function name denotes running code,
+// the only action this engine performs. A model on a tool-call dialect names its
+// run function execute, execute_bash, execute_python, or code_interpreter, and the
+// salvage lifts the code out of it. It also reaches for tools this engine does not
+// provide: mimo-v2.5-free emits <function=editor><parameter=command>view, whose
+// first parameter is a tool verb ("view"), not code. Salvaging that verb ran
+// "view", which is vim in read-only mode, and with no terminal it blocked the whole
+// run until the deadline. Gating the salvage to an execution name drops the editor
+// call to nothing, so the turn ends and the finish guard nudges the model back to a
+// code block rather than hanging on an interactive program.
+func isExecFunc(name string) bool {
+	n := strings.ToLower(name)
+	for _, s := range []string{"execute", "python", "ipython", "code_interpreter", "bash", "shell"} {
+		if strings.Contains(n, s) {
+			return true
+		}
+	}
+	return n == "run" || n == "sh" || n == "code"
 }
