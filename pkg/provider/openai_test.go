@@ -228,6 +228,85 @@ func TestOaMessagesInvalidToolArgsGuard(t *testing.T) {
 	}
 }
 
+// promptCacheKey must be stable for the same static prefix (so every round of a
+// run routes to one cache), sensitive to a prefix change (so a different agent or
+// a trimmed prompt gets its own cache), and empty when there is nothing to key
+// on. A slip here would either scatter a run across caches or wrongly collide two
+// agents onto one.
+func TestPromptCacheKey(t *testing.T) {
+	base := Request{
+		System: "be nice",
+		Tools:  []Tool{{Name: "shell", Description: "run", Schema: json.RawMessage(`{"type":"object"}`)}},
+	}
+	// Messages differ every round; the key must not.
+	r1 := base
+	r1.Messages = []Message{UserText("a")}
+	r2 := base
+	r2.Messages = []Message{UserText("a"), UserText("b"), UserText("c")}
+	k1, k2 := promptCacheKey(r1), promptCacheKey(r2)
+	if k1 == "" || k1 != k2 {
+		t.Errorf("key must be stable across rounds: %q vs %q", k1, k2)
+	}
+	if !strings.HasPrefix(k1, "tomo-") {
+		t.Errorf("key should be namespaced: %q", k1)
+	}
+
+	// A changed system prompt is a different static prefix, so a different key.
+	rSys := base
+	rSys.System = "be terse"
+	if promptCacheKey(rSys) == k1 {
+		t.Errorf("changed system must change the key")
+	}
+	// A changed tool set likewise.
+	rTool := base
+	rTool.Tools = []Tool{{Name: "shell", Description: "run", Schema: json.RawMessage(`{"type":"object"}`)},
+		{Name: "read", Description: "read a file", Schema: json.RawMessage(`{"type":"object"}`)}}
+	if promptCacheKey(rTool) == k1 {
+		t.Errorf("changed tool set must change the key")
+	}
+	// Nothing stable to key on -> no field.
+	if got := promptCacheKey(Request{Messages: []Message{UserText("hi")}}); got != "" {
+		t.Errorf("empty prefix should yield no key, got %q", got)
+	}
+}
+
+// The routing hint must reach the wire and repeat verbatim across calls that
+// share the static prefix, which is what pins a run to one cache backend.
+func TestOpenAISendsPromptCacheKey(t *testing.T) {
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		if k, ok := body["prompt_cache_key"].(string); ok {
+			keys = append(keys, k)
+		} else {
+			keys = append(keys, "")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\ndata: [DONE]\n")
+	}))
+	defer srv.Close()
+
+	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+	req := Request{
+		Model:  "qwen3-32b",
+		System: "be nice",
+		Tools:  []Tool{{Name: "shell", Description: "run", Schema: json.RawMessage(`{"type":"object"}`)}},
+	}
+	req.Messages = []Message{UserText("first")}
+	if _, err := p.Stream(context.Background(), req, nil); err != nil {
+		t.Fatal(err)
+	}
+	req.Messages = append(req.Messages, UserText("second")) // next round, same prefix
+	if _, err := p.Stream(context.Background(), req, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] {
+		t.Errorf("prompt_cache_key should be present and identical across rounds, got %q", keys)
+	}
+}
+
 func TestOpenAIUserImage(t *testing.T) {
 	msgs, err := oaMessages(Request{Messages: []Message{{
 		Role: RoleUser,
@@ -245,5 +324,68 @@ func TestOpenAIUserImage(t *testing.T) {
 	}
 	if parts[1].ImageURL == nil || parts[1].ImageURL.URL != "data:image/png;base64,aGk=" {
 		t.Errorf("image part = %+v", parts[1])
+	}
+}
+
+func TestRetryableStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		code int
+		body string
+		want bool
+	}{
+		{"500", 500, "internal", true},
+		{"502 body", 502, "bad gateway", true},
+		{"429", http.StatusTooManyRequests, "slow down", true},
+		{"400 gateway upstream failed", 400, `{"error":{"message":"Error from provider (Console): Upstream request failed","type":"invalid_request_error"}}`, true},
+		{"400 service unavailable", 400, "upstream service unavailable", true},
+		{"400 malformed request", 400, `{"error":{"message":"Invalid 'messages': too long","type":"invalid_request_error"}}`, false},
+		{"401 auth", 401, "invalid api key", false},
+		{"404 model", 404, "model not found", false},
+	}
+	for _, c := range cases {
+		if got := retryableStatus(c.code, c.body); got != c.want {
+			t.Errorf("%s: retryableStatus(%d, %q) = %v, want %v", c.name, c.code, c.body, got, c.want)
+		}
+	}
+}
+
+// A gateway that forwards a flaky upstream hiccup as a 400 carrying "Upstream
+// request failed" must come back marked transient, so the agent loop retries it
+// instead of sinking the whole turn, the failure that lost an oi run on the free
+// deepseek path through opencode zen.
+func TestOpenAIStreamGatewayUpstreamFailureIsTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"Error from provider (Console): Upstream request failed","type":"invalid_request_error","code":"invalid_request_error"}}`)
+	}))
+	defer srv.Close()
+
+	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+	_, err := p.Stream(context.Background(), Request{Model: "deepseek-v4-flash-free", Messages: []Message{UserText("hi")}}, func(Event) {})
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !Transient(err) {
+		t.Errorf("gateway upstream 400 should be transient, got non-transient: %v", err)
+	}
+}
+
+// A genuine malformed-request 400 must stay permanent, so a real bug is not
+// retried three times and masked.
+func TestOpenAIStreamMalformed400IsPermanent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"Invalid 'max_tokens': must be positive","type":"invalid_request_error"}}`)
+	}))
+	defer srv.Close()
+
+	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+	_, err := p.Stream(context.Background(), Request{Model: "x", Messages: []Message{UserText("hi")}}, func(Event) {})
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if Transient(err) {
+		t.Errorf("malformed 400 should be permanent, got transient: %v", err)
 	}
 }
