@@ -18,6 +18,7 @@ import (
 	"github.com/tamnd/tomo/pkg/config"
 	"github.com/tamnd/tomo/pkg/curator"
 	"github.com/tamnd/tomo/pkg/engine/cx"
+	"github.com/tamnd/tomo/pkg/engine/kata"
 	"github.com/tamnd/tomo/pkg/engine/oi"
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/policy"
@@ -137,7 +138,7 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 // run under, and which memory and skills dirs to read. The zero value plus a
 // model spec builds the default worker against the top-level dirs.
 type agentBuild struct {
-	engine    string // "agent" (default), "cx", "cx-offline", or "oi"; empty means the default engine
+	engine    string // "agent" (default), "cx", "cx-offline", "oi", or "kata"; empty means the default engine
 	persona   string // extra system-prompt lines, empty for the default worker
 	model     string // provider/model spec, empty means the config default
 	memoryDir string // empty means <data>/memory
@@ -201,11 +202,12 @@ func compactFromEnv() compactSettings {
 }
 
 // buildLoop builds whichever engine the spec selects: the default agent, the
-// codex-style cx engine when b.engine is "cx", or the Open Interpreter oi engine
-// when it is "oi". All are returned through the engine interface, so the chat
-// REPL and the one-shot prompt path drive any of them the same way. Every other
-// caller (serve's workforce, plan run, the MCP server) stays on buildAgent and
-// the concrete *agent.Agent it returns.
+// codex-style cx engine when b.engine is "cx", the Open Interpreter oi engine
+// when it is "oi", or the kata engine when it is "kata". All are returned
+// through the engine interface, so the chat REPL and the one-shot prompt path
+// drive any of them the same way. Every other caller (serve's workforce, plan
+// run, the MCP server) stays on buildAgent and the concrete *agent.Agent it
+// returns.
 func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool.Tool) (engine, string, error) {
 	if b.engine == "oi" {
 		parts, err := resolveParts(cfg, b, extra...)
@@ -221,6 +223,21 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 			Workspace: parts.workspace,
 		}
 		return e, parts.label + " · oi", nil
+	}
+	if b.engine == "kata" {
+		parts, err := resolveParts(cfg, b, extra...)
+		if err != nil {
+			return nil, "", err
+		}
+		e := &kata.Engine{
+			Provider:  parts.provider,
+			Model:     parts.modelID,
+			System:    kata.SystemPrompt(time.Now(), parts.workspace, b.persona, parts.index, parts.skillIndex),
+			Box:       parts.box,
+			Gate:      guard,
+			Workspace: parts.workspace,
+		}
+		return e, parts.label + " · kata", nil
 	}
 	if !isCX(b.engine) {
 		return buildAgent(cfg, b, guard, extra...)
