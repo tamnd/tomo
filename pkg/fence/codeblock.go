@@ -1,21 +1,19 @@
-// Package oi is a third agent engine for tomo, shaped after Open Interpreter:
-// the model does not call structured tools, it writes a fenced code block and
-// the engine runs it, feeds the output back, and loops until the model stops
-// emitting code. The appeal is for weak or cheap models, which write a Python or
-// shell block far more reliably than they emit well-formed function-call JSON, so
-// a single run-this-code primitive removes the tool-calling failure mode
-// entirely. It reuses tomo's provider, sandbox, and the default engine's Sink and
-// Gate types, and carries its own system prompt (prompts/system.md), so it drops
-// in wherever the default engine does.
-package oi
+// Package fence lifts runnable code blocks out of a model reply. It is the
+// lexical layer of a code-as-action engine: the model writes an action as a
+// fenced code block, or in whatever costume its fine-tune reaches for instead,
+// and this package reads the language tag and the code back out. Which blocks
+// run, and how, is engine policy and stays with the engine; this package only
+// parses text, so any engine built on the same one-action idea shares it
+// rather than growing a drifting copy.
+package fence
 
 import "strings"
 
-// block is one fenced code block lifted from a model reply: the language tag
+// Block is one fenced code block lifted from a model reply: the language tag
 // after the opening fence and the raw code between the fences.
-type block struct {
-	lang string
-	code string
+type Block struct {
+	Lang string
+	Code string
 }
 
 // parseBlocks pulls every fenced code block out of a model reply, in order. It
@@ -31,8 +29,8 @@ type block struct {
 // but is common enough that dropping the block would lose a real action. When a
 // fence opens mid-line, the language tag is whatever follows the fence run on
 // that same line.
-func parseBlocks(reply string) []block {
-	var out []block
+func parseBlocks(reply string) []Block {
+	var out []Block
 	lines := strings.Split(reply, "\n")
 	inFence := false
 	var fence, lang string
@@ -51,7 +49,7 @@ func parseBlocks(reply string) []block {
 		// A closing fence is the same run of the same character with no trailing
 		// language tag; anything else is code inside the block.
 		if closesFence(trimmed, fence) {
-			out = append(out, block{lang: strings.ToLower(lang), code: strings.Join(body, "\n")})
+			out = append(out, Block{Lang: strings.ToLower(lang), Code: strings.Join(body, "\n")})
 			inFence = false
 			continue
 		}
@@ -62,7 +60,7 @@ func parseBlocks(reply string) []block {
 		// block's code get swallowed as this block's body and the code fails to run.
 		// Split it: close the current block and reopen from the trailing fence.
 		if f, tag, ok := reopenAfterClose(trimmed, fence); ok {
-			out = append(out, block{lang: strings.ToLower(lang), code: strings.Join(body, "\n")})
+			out = append(out, Block{Lang: strings.ToLower(lang), Code: strings.Join(body, "\n")})
 			fence, lang = f, tag
 			body = body[:0]
 			continue
@@ -70,7 +68,7 @@ func parseBlocks(reply string) []block {
 		body = append(body, line)
 	}
 	if inFence {
-		out = append(out, block{lang: strings.ToLower(lang), code: strings.Join(body, "\n")})
+		out = append(out, Block{Lang: strings.ToLower(lang), Code: strings.Join(body, "\n")})
 	}
 	return out
 }

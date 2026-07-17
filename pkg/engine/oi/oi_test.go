@@ -381,19 +381,19 @@ func TestDroppedBlockGuardFiresOnce(t *testing.T) {
 // do not trigger the guard: droppedFileBlock only flags source and config
 // languages a model pastes to create a file.
 func TestDroppedFileBlockSelectsSourceOnly(t *testing.T) {
-	if _, ok := droppedFileBlock([]block{{lang: "go", code: "package main"}}); !ok {
+	if _, ok := droppedFileBlock([]block{{Lang: "go", Code: "package main"}}); !ok {
 		t.Fatalf("go source block should be flagged")
 	}
-	if _, ok := droppedFileBlock([]block{{lang: "text", code: "hello"}}); ok {
+	if _, ok := droppedFileBlock([]block{{Lang: "text", Code: "hello"}}); ok {
 		t.Fatalf("text block should not be flagged")
 	}
-	if _, ok := droppedFileBlock([]block{{lang: "diff", code: "- a\n+ b"}}); ok {
+	if _, ok := droppedFileBlock([]block{{Lang: "diff", Code: "- a\n+ b"}}); ok {
 		t.Fatalf("diff block should not be flagged")
 	}
-	if _, ok := droppedFileBlock([]block{{lang: "go", code: "   "}}); ok {
+	if _, ok := droppedFileBlock([]block{{Lang: "go", Code: "   "}}); ok {
 		t.Fatalf("empty source block should not be flagged")
 	}
-	if _, ok := droppedFileBlock([]block{{lang: "python", code: "print(1)"}}); ok {
+	if _, ok := droppedFileBlock([]block{{Lang: "python", Code: "print(1)"}}); ok {
 		t.Fatalf("runnable python block must never be flagged as dropped")
 	}
 }
@@ -420,9 +420,9 @@ func TestLanguageMapping(t *testing.T) {
 }
 
 func TestRunnableBlocksDropsNonRunnable(t *testing.T) {
-	in := []block{{lang: "python", code: "x"}, {lang: "json", code: "{}"}, {lang: "sh", code: "ls"}}
+	in := []block{{Lang: "python", Code: "x"}, {Lang: "json", Code: "{}"}, {Lang: "sh", Code: "ls"}}
 	out := runnableBlocks(in)
-	if len(out) != 2 || out[0].lang != "python" || out[1].lang != "sh" {
+	if len(out) != 2 || out[0].Lang != "python" || out[1].Lang != "sh" {
 		t.Fatalf("runnable = %+v, want python and sh", out)
 	}
 }

@@ -14,10 +14,10 @@ import (
 var errExit = errors.New("exit status 1")
 
 func TestBlockSigDistinguishesAndMatches(t *testing.T) {
-	a := block{lang: "sh", code: "pytest -q"}
-	b := block{lang: "sh", code: "pytest -q"}
-	c := block{lang: "sh", code: "pytest -x"}
-	d := block{lang: "python", code: "pytest -q"}
+	a := block{Lang: "sh", Code: "pytest -q"}
+	b := block{Lang: "sh", Code: "pytest -q"}
+	c := block{Lang: "sh", Code: "pytest -x"}
+	d := block{Lang: "python", Code: "pytest -q"}
 	if blockSig(a) != blockSig(b) {
 		t.Fatalf("identical blocks got different signatures")
 	}

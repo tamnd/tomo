@@ -1,4 +1,4 @@
-package oi
+package fence
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// A dialect is how a given model natively expresses "run this code". The Open
+// A Dialect is how a given model natively expresses "run this code". The Open
 // Interpreter idea is one action, a code block, but models disagree on the
 // syntax of that block even when the prompt asks for Markdown: a base model
 // writes a Markdown fence, a tool-tuned model reaches for JSON, a Hermes-family
@@ -17,15 +17,15 @@ import (
 // This is the per-model harness: meet the model where it is. Adding a model is
 // adding one registry entry, and if its syntax is new, one parse function, which
 // is the seam a later fine-tune tunes at.
-type dialect struct {
-	// name identifies the dialect in a trace.
-	name string
-	// parse lifts the runnable blocks out of a reply in the model's own syntax.
-	parse func(reply string) []block
-	// hint is appended to the system prompt to ask the model for the syntax this
+type Dialect struct {
+	// Name identifies the dialect in a trace.
+	Name string
+	// Parse lifts the runnable blocks out of a reply in the model's own syntax.
+	Parse func(reply string) []Block
+	// Hint is appended to the system prompt to ask the model for the syntax this
 	// dialect parses. Empty leaves the base prompt's Markdown instruction alone,
 	// which is right for a model that already writes Markdown.
-	hint string
+	Hint string
 }
 
 // markdownDialect is the default: the lenient Markdown fence parser, which also
@@ -34,12 +34,12 @@ type dialect struct {
 // models do. When a reply carries no fence at all it falls back to the generic
 // execute tool-call salvage, which recovers the action a tool-tuned model
 // sometimes emits as an XML <tool_call> even though the prompt asked for a fence.
-var markdownDialect = dialect{
-	name:  "markdown",
-	parse: parseMarkdown,
+var markdownDialect = Dialect{
+	Name:  "markdown",
+	Parse: ParseMarkdown,
 }
 
-// parseMarkdown reads the Markdown fences and, only when there are none, salvages
+// ParseMarkdown reads the Markdown fences and, only when there are none, salvages
 // a generic execute XML tool call. A default-dialect model (deepseek among them)
 // writes a fence on almost every turn, so the fence parser carries the work and
 // the salvage never runs; but that model intermittently reaches for its native
@@ -47,7 +47,7 @@ var markdownDialect = dialect{
 // The fallback recovers it without touching the dominant fenced path or the
 // system prompt, the same meet-the-model-where-it-is repair the glued-fence split
 // is.
-func parseMarkdown(reply string) []block {
+func ParseMarkdown(reply string) []Block {
 	if b := parseBlocks(reply); len(b) > 0 {
 		return b
 	}
@@ -60,10 +60,10 @@ func parseMarkdown(reply string) []block {
 // {"contents":[{"text":"...","language":"..."}]}, and its common cousins where
 // the code lives under "code"/"command"/"input" and the language under
 // "language"/"lang". A reply that is not such an object yields no block.
-var toolJSONDialect = dialect{
-	name:  "tooljson",
-	parse: parseToolJSON,
-	hint:  "\n\nEmit each action as a single JSON object and nothing else: {\"contents\":[{\"language\":\"python|sh\",\"text\":\"<code>\"}]}. Do not wrap it in Markdown. To finish, reply with plain prose and no JSON object.",
+var toolJSONDialect = Dialect{
+	Name:  "tooljson",
+	Parse: parseToolJSON,
+	Hint:  "\n\nEmit each action as a single JSON object and nothing else: {\"contents\":[{\"language\":\"python|sh\",\"text\":\"<code>\"}]}. Do not wrap it in Markdown. To finish, reply with plain prose and no JSON object.",
 }
 
 // xmlToolCallDialect fits the Hermes and Qwen family, which emit an XML tool call
@@ -71,10 +71,10 @@ var toolJSONDialect = dialect{
 // </function></tool_call>. It maps the bash/shell function to a shell block and
 // a python function to a python block, reading the code from the command/code
 // parameter.
-var xmlToolCallDialect = dialect{
-	name:  "xmltoolcall",
-	parse: parseXMLToolCall,
-	hint:  "\n\nEmit each action as a single <tool_call> with a <function=execute_bash> or <function=execute_python> and a <parameter=command> holding the code. To finish, reply with plain prose and no tool call.",
+var xmlToolCallDialect = Dialect{
+	Name:  "xmltoolcall",
+	Parse: parseXMLToolCall,
+	Hint:  "\n\nEmit each action as a single <tool_call> with a <function=execute_bash> or <function=execute_python> and a <parameter=command> holding the code. To finish, reply with plain prose and no tool call.",
 }
 
 // hashToolCallDialect fits hy3-free, which emits a tool call whose tags carry a
@@ -86,17 +86,17 @@ var xmlToolCallDialect = dialect{
 // costume first, then falls back to the Markdown fence parser for the rounds hy3
 // does write a clean fence. The hint steers it toward the fence, the shape it
 // handles most cleanly.
-var hashToolCallDialect = dialect{
-	name:  "hashtoolcall",
-	parse: parseHashToolCall,
-	hint:  "\n\nEmit each action as a single Markdown code fence and nothing else: ```shell or ```python on the opening line, the code, then a closing ```. Do not wrap the code in <tool_call> tags or CDATA. To finish, reply with plain prose and no code fence.",
+var hashToolCallDialect = Dialect{
+	Name:  "hashtoolcall",
+	Parse: parseHashToolCall,
+	Hint:  "\n\nEmit each action as a single Markdown code fence and nothing else: ```shell or ```python on the opening line, the code, then a closing ```. Do not wrap the code in <tool_call> tags or CDATA. To finish, reply with plain prose and no code fence.",
 }
 
-// dialectFor picks the dialect for a model by family, matching on the bare model
+// For picks the dialect for a model by family, matching on the bare model
 // id (any provider/ prefix stripped). An unknown model gets Markdown, the safe
 // default: a model that writes fences is parsed correctly, and one that does not
 // simply produces no block and ends the turn, the same as before dialects.
-func dialectFor(model string) dialect {
+func For(model string) Dialect {
 	id := model
 	if i := strings.LastIndex(id, "/"); i >= 0 {
 		id = id[i+1:]
@@ -124,10 +124,10 @@ func dialectFor(model string) dialect {
 // the first language word as the language, and takes the rest as the code. When
 // there is no hash opener at all it falls back to the Markdown parser, so a round
 // where hy3 does write a clean fence is still read.
-func parseHashToolCall(reply string) []block {
+func parseHashToolCall(reply string) []Block {
 	loc := hashToolOpenRe.FindStringIndex(reply)
 	if loc == nil {
-		return parseMarkdown(reply)
+		return ParseMarkdown(reply)
 	}
 	body := reply[loc[1]:]
 	// Cut a stray closing Markdown fence the model appends after the code. The code
@@ -162,7 +162,7 @@ func parseHashToolCall(reply string) []block {
 	if lang == "" {
 		lang = "sh"
 	}
-	return []block{{lang: lang, code: code}}
+	return []Block{{Lang: lang, Code: code}}
 }
 
 // jsonAction is the union of the field names the tool-JSON dialects use for a
@@ -198,7 +198,7 @@ func (a jsonAction) langOf() string {
 // names. It tolerates the object being wrapped in a Markdown fence (a tool-tuned
 // model sometimes does both) and prose around it, by scanning for the outermost
 // brace-balanced span and decoding that.
-func parseToolJSON(reply string) []block {
+func parseToolJSON(reply string) []Block {
 	span := firstJSONObject(reply)
 	if span == "" {
 		return nil
@@ -207,10 +207,10 @@ func parseToolJSON(reply string) []block {
 	if err := json.Unmarshal([]byte(span), &a); err != nil {
 		return nil
 	}
-	var out []block
+	var out []Block
 	add := func(x jsonAction) {
 		if code := x.codeOf(); code != "" {
-			out = append(out, block{lang: strings.ToLower(x.langOf()), code: code})
+			out = append(out, Block{Lang: strings.ToLower(x.langOf()), Code: code})
 		}
 	}
 	if len(a.Contents) > 0 {
@@ -307,8 +307,8 @@ func bareLangLine(body string) (lang, rest string) {
 // the markdown dialect's no-fence fallback, so a model that writes fences is
 // unaffected. A bare <language> tag or first-line language selects the language,
 // defaulting to shell the way a bare fence does.
-func parseExecuteXML(reply string) []block {
-	var out []block
+func parseExecuteXML(reply string) []Block {
+	var out []Block
 	for _, tc := range xmlToolCallRe.FindAllStringSubmatch(reply, -1) {
 		inner := tc[1]
 		cm := xmlCodeRe.FindStringSubmatch(inner)
@@ -325,7 +325,7 @@ func parseExecuteXML(reply string) []block {
 				lang = t
 			}
 		}
-		out = append(out, block{lang: strings.ToLower(lang), code: code})
+		out = append(out, Block{Lang: strings.ToLower(lang), Code: code})
 	}
 	for _, pc := range htmlPreCodeRe.FindAllStringSubmatch(reply, -1) {
 		lang, body := bareLangLine(strings.Trim(pc[1], "\n"))
@@ -336,7 +336,7 @@ func parseExecuteXML(reply string) []block {
 		if lang == "" {
 			lang = "sh"
 		}
-		out = append(out, block{lang: lang, code: code})
+		out = append(out, Block{Lang: lang, Code: code})
 	}
 	// A language-named tag: the model names the fence after the language itself,
 	// <shell>find ...</shell> or <python>...</python>. The open and close tag must
@@ -349,7 +349,7 @@ func parseExecuteXML(reply string) []block {
 		if strings.TrimSpace(code) == "" {
 			continue
 		}
-		out = append(out, block{lang: strings.ToLower(lt[1]), code: code})
+		out = append(out, Block{Lang: strings.ToLower(lt[1]), Code: code})
 	}
 	// The Hermes <function=NAME><parameter=...> shape from a model on the default
 	// Markdown dialect. mimo-v2.5-free reaches for <function=code_interpreter>
@@ -371,7 +371,7 @@ func parseExecuteXML(reply string) []block {
 		if strings.TrimSpace(code) == "" {
 			continue
 		}
-		out = append(out, block{lang: langForFunc(fn[1]), code: code})
+		out = append(out, Block{Lang: langForFunc(fn[1]), Code: code})
 	}
 	return out
 }
@@ -382,8 +382,8 @@ func parseExecuteXML(reply string) []block {
 // newlines the format pads it with. Only a code-execution function is read: this
 // engine's one action is running code, so a call to a tool it does not provide
 // (an editor, a file viewer) is not turned into a shell command.
-func parseXMLToolCall(reply string) []block {
-	var out []block
+func parseXMLToolCall(reply string) []Block {
+	var out []Block
 	for _, fn := range xmlFuncRe.FindAllStringSubmatch(reply, -1) {
 		if !isExecFunc(fn[1]) {
 			continue
@@ -396,7 +396,7 @@ func parseXMLToolCall(reply string) []block {
 		if strings.TrimSpace(code) == "" {
 			continue
 		}
-		out = append(out, block{lang: langForFunc(fn[1]), code: code})
+		out = append(out, Block{Lang: langForFunc(fn[1]), Code: code})
 	}
 	return out
 }

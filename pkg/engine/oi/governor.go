@@ -79,7 +79,7 @@ const sprawlNudgeText = "You have changed many different files this turn. " +
 // loop can tell a genuinely new action from a re-run of one it already made this
 // turn. The code is hashed so the seen set stays small on a long run.
 func blockSig(b block) string {
-	sum := sha256.Sum256([]byte(b.lang + "\x00" + b.code))
+	sum := sha256.Sum256([]byte(b.Lang + "\x00" + b.Code))
 	return hex.EncodeToString(sum[:8])
 }
 

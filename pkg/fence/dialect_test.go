@@ -1,4 +1,4 @@
-package oi
+package fence
 
 import "testing"
 
@@ -17,8 +17,8 @@ func TestDialectForByFamily(t *testing.T) {
 		{"deepseek-v4-flash-free", "markdown"},
 		{"something-unknown", "markdown"},
 	} {
-		if got := dialectFor(c.model).name; got != c.want {
-			t.Errorf("dialectFor(%q) = %q, want %q", c.model, got, c.want)
+		if got := For(c.model).Name; got != c.want {
+			t.Errorf("For(%q) = %q, want %q", c.model, got, c.want)
 		}
 	}
 }
@@ -33,7 +33,7 @@ func TestToolJSONParsesNorthMiniShape(t *testing.T) {
   "settings": {"shell": {"image": "ubuntu:22.04"}}
 }`
 	blocks := parseToolJSON(reply)
-	if len(blocks) != 1 || blocks[0].lang != "sh" || blocks[0].code != "ls -la" {
+	if len(blocks) != 1 || blocks[0].Lang != "sh" || blocks[0].Code != "ls -la" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
@@ -41,10 +41,10 @@ func TestToolJSONParsesNorthMiniShape(t *testing.T) {
 // It must also read a bare object with the code under "code"/"command", and find
 // the object even when prose or a fence wraps it.
 func TestToolJSONVariantsAndWrapping(t *testing.T) {
-	if b := parseToolJSON(`Here you go: {"language":"python","code":"print(1)"} done`); len(b) != 1 || b[0].lang != "python" || b[0].code != "print(1)" {
+	if b := parseToolJSON(`Here you go: {"language":"python","code":"print(1)"} done`); len(b) != 1 || b[0].Lang != "python" || b[0].Code != "print(1)" {
 		t.Fatalf("wrapped bare object: %+v", b)
 	}
-	if b := parseToolJSON("```json\n{\"command\":\"pytest -q\"}\n```"); len(b) != 1 || b[0].code != "pytest -q" {
+	if b := parseToolJSON("```json\n{\"command\":\"pytest -q\"}\n```"); len(b) != 1 || b[0].Code != "pytest -q" {
 		t.Fatalf("fenced object: %+v", b)
 	}
 	if b := parseToolJSON("no json here"); len(b) != 0 {
@@ -57,7 +57,7 @@ func TestToolJSONVariantsAndWrapping(t *testing.T) {
 func TestXMLToolCallParsesNemotronShape(t *testing.T) {
 	reply := "<tool_call>\n<function=execute_bash>\n<parameter=command>\ncd /tmp && git log --oneline -10\n</parameter>\n</function>\n</tool_call>"
 	blocks := parseXMLToolCall(reply)
-	if len(blocks) != 1 || blocks[0].lang != "shell" || blocks[0].code != "cd /tmp && git log --oneline -10" {
+	if len(blocks) != 1 || blocks[0].Lang != "shell" || blocks[0].Code != "cd /tmp && git log --oneline -10" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
@@ -66,7 +66,7 @@ func TestXMLToolCallPythonAndMultiple(t *testing.T) {
 	reply := "<tool_call><function=execute_python><parameter=code>print(1)</parameter></function></tool_call>" +
 		"<tool_call><function=execute_bash><parameter=command>ls</parameter></function></tool_call>"
 	blocks := parseXMLToolCall(reply)
-	if len(blocks) != 2 || blocks[0].lang != "python" || blocks[0].code != "print(1)" || blocks[1].lang != "shell" || blocks[1].code != "ls" {
+	if len(blocks) != 2 || blocks[0].Lang != "python" || blocks[0].Code != "print(1)" || blocks[1].Lang != "shell" || blocks[1].Code != "ls" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
@@ -79,29 +79,29 @@ func TestParseHashToolCall(t *testing.T) {
 	// Shape one: <tool_calls:HASH> wrapper, ![CDATA[ ... ]] code, invoke/parameter
 	// junk the model pads with, no trailing fence.
 	cdata := "Let me look at the relevant file.<tool_calls:6124c78e>\n<tool_call:6124c78e>shell\n<tool_call:6124c78e>![CDATA[\ncat /work/src/gitingest/parse_query.py\n]]</parameter>\n</invoke>\n</tool_call:6124c78e>\n</tool_calls:6124c78e>"
-	if b := parseHashToolCall(cdata); len(b) != 1 || b[0].lang != "shell" || b[0].code != "cat /work/src/gitingest/parse_query.py" {
+	if b := parseHashToolCall(cdata); len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "cat /work/src/gitingest/parse_query.py" {
 		t.Fatalf("cdata shape: %+v", b)
 	}
 	// Shape two: bare code after the language line, trailed by a stray closing fence.
 	bare := "<tool_calls:6124c78e>\n<tool_call:6124c78e>shell\nawk 'NR>=110 && NR<=180' /work/src/gitingest/parse_query.py\n```"
-	if b := parseHashToolCall(bare); len(b) != 1 || b[0].lang != "shell" || b[0].code != "awk 'NR>=110 && NR<=180' /work/src/gitingest/parse_query.py" {
+	if b := parseHashToolCall(bare); len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "awk 'NR>=110 && NR<=180' /work/src/gitingest/parse_query.py" {
 		t.Fatalf("bare shape: %+v", b)
 	}
 	// Shape three: a multi-line python heredoc, the round that carried hy3's real
 	// one-line fix and had been running empty.
 	heredoc := "The fix is targeted.<tool_calls:6124c78e>\n<tool_call:6124c78e>shell\ncd /work && python - <<'EOF'\nimport re\nprint('patched')\nEOF\n```"
 	b := parseHashToolCall(heredoc)
-	if len(b) != 1 || b[0].lang != "shell" || b[0].code != "cd /work && python - <<'EOF'\nimport re\nprint('patched')\nEOF" {
+	if len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "cd /work && python - <<'EOF'\nimport re\nprint('patched')\nEOF" {
 		t.Fatalf("heredoc shape: %+v", b)
 	}
 	// Fallback: a round with no hash costume, just a clean fence, is still read.
 	fence := "```shell\ncat /work/x.py\n```"
-	if b := parseHashToolCall(fence); len(b) != 1 || b[0].lang != "shell" || b[0].code != "cat /work/x.py" {
+	if b := parseHashToolCall(fence); len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "cat /work/x.py" {
 		t.Fatalf("fence fallback: %+v", b)
 	}
 	// A python language line selects python.
 	py := "<tool_call:deadbeef>python\nprint(1)\n```"
-	if b := parseHashToolCall(py); len(b) != 1 || b[0].lang != "python" || b[0].code != "print(1)" {
+	if b := parseHashToolCall(py); len(b) != 1 || b[0].Lang != "python" || b[0].Code != "print(1)" {
 		t.Fatalf("python shape: %+v", b)
 	}
 }
@@ -111,7 +111,7 @@ func TestParseHashToolCall(t *testing.T) {
 func TestParseBlocksFenceGluedToProse(t *testing.T) {
 	reply := "I'll start by exploring the repository structure.```python\nimport os\nprint(os.getcwd())\n```"
 	blocks := parseBlocks(reply)
-	if len(blocks) != 1 || blocks[0].lang != "python" || blocks[0].code != "import os\nprint(os.getcwd())" {
+	if len(blocks) != 1 || blocks[0].Lang != "python" || blocks[0].Code != "import os\nprint(os.getcwd())" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
@@ -123,10 +123,10 @@ func TestParseExecuteXMLDeepseekShape(t *testing.T) {
 	reply := "<tool_call>\n<tool_name>execute</tool_name>\n<tool_args>\n<language>sh</language>\n" +
 		"<code>find /work -name \"parse_query.py\" -type f</code>\n</tool_args>\n</tool_call>"
 	b := parseExecuteXML(reply)
-	if len(b) != 1 || b[0].lang != "sh" || b[0].code != "find /work -name \"parse_query.py\" -type f" {
+	if len(b) != 1 || b[0].Lang != "sh" || b[0].Code != "find /work -name \"parse_query.py\" -type f" {
 		t.Fatalf("blocks = %+v", b)
 	}
-	if b := parseExecuteXML("<tool_call><code>print(1)</code></tool_call>"); len(b) != 1 || b[0].lang != "sh" || b[0].code != "print(1)" {
+	if b := parseExecuteXML("<tool_call><code>print(1)</code></tool_call>"); len(b) != 1 || b[0].Lang != "sh" || b[0].Code != "print(1)" {
 		t.Fatalf("no-language default: %+v", b)
 	}
 	// A bare <code> with no <tool_call> wrapper, as in a documentation snippet, is
@@ -142,14 +142,14 @@ func TestParseExecuteXMLHTMLPreCode(t *testing.T) {
 	reply := "<details><summary>steps</summary>We need to find it.</details>\n" +
 		"<pre><code>shell\ngrep -rn \"_parse_url\" /work/\n</code></pre>"
 	b := parseExecuteXML(reply)
-	if len(b) != 1 || b[0].lang != "shell" || b[0].code != "grep -rn \"_parse_url\" /work/" {
+	if len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "grep -rn \"_parse_url\" /work/" {
 		t.Fatalf("blocks = %+v", b)
 	}
 	// No first-line language tag defaults to shell, and a python tag is kept.
-	if b := parseExecuteXML("<pre><code>ls -la</code></pre>"); len(b) != 1 || b[0].lang != "sh" || b[0].code != "ls -la" {
+	if b := parseExecuteXML("<pre><code>ls -la</code></pre>"); len(b) != 1 || b[0].Lang != "sh" || b[0].Code != "ls -la" {
 		t.Fatalf("no-language pre: %+v", b)
 	}
-	if b := parseExecuteXML("<pre><code>python\nprint(1)\n</code></pre>"); len(b) != 1 || b[0].lang != "python" || b[0].code != "print(1)" {
+	if b := parseExecuteXML("<pre><code>python\nprint(1)\n</code></pre>"); len(b) != 1 || b[0].Lang != "python" || b[0].Code != "print(1)" {
 		t.Fatalf("python pre: %+v", b)
 	}
 }
@@ -157,10 +157,10 @@ func TestParseExecuteXMLHTMLPreCode(t *testing.T) {
 // parseExecuteXML must salvage a language-named tag, the shape where the model
 // names the fence after the language: <shell>...</shell>, <python>...</python>.
 func TestParseExecuteXMLLangTag(t *testing.T) {
-	if b := parseExecuteXML("Let's start.\n<shell>\nfind /work -type f -name \"*.py\" | head -30\n</shell>"); len(b) != 1 || b[0].lang != "shell" || b[0].code != "find /work -type f -name \"*.py\" | head -30" {
+	if b := parseExecuteXML("Let's start.\n<shell>\nfind /work -type f -name \"*.py\" | head -30\n</shell>"); len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "find /work -type f -name \"*.py\" | head -30" {
 		t.Fatalf("shell tag: %+v", b)
 	}
-	if b := parseExecuteXML("<python>print(1)</python>"); len(b) != 1 || b[0].lang != "python" || b[0].code != "print(1)" {
+	if b := parseExecuteXML("<python>print(1)</python>"); len(b) != 1 || b[0].Lang != "python" || b[0].Code != "print(1)" {
 		t.Fatalf("python tag: %+v", b)
 	}
 	// A lone opening tag with no matching close must not swallow the rest of the
@@ -177,13 +177,13 @@ func TestParseExecuteXMLLangTag(t *testing.T) {
 func TestParseExecuteXMLFunctionParameterShape(t *testing.T) {
 	reply := "<tool_call>\n<function=code_interpreter>\n<parameter=code>\nimport os\nprint(os.getcwd())\n</parameter>\n</function>\n</tool_call>"
 	b := parseExecuteXML(reply)
-	if len(b) != 1 || b[0].lang != "python" || b[0].code != "import os\nprint(os.getcwd())" {
+	if len(b) != 1 || b[0].Lang != "python" || b[0].Code != "import os\nprint(os.getcwd())" {
 		t.Fatalf("code_interpreter costume: %+v", b)
 	}
 	// A bash-named function runs shell, and two calls in one reply give two blocks.
 	two := "<function=execute_bash><parameter=command>ls</parameter></function>" +
 		"<function=code_interpreter><parameter=code>print(1)</parameter></function>"
-	if b := parseExecuteXML(two); len(b) != 2 || b[0].lang != "shell" || b[0].code != "ls" || b[1].lang != "python" || b[1].code != "print(1)" {
+	if b := parseExecuteXML(two); len(b) != 2 || b[0].Lang != "shell" || b[0].Code != "ls" || b[1].Lang != "python" || b[1].Code != "print(1)" {
 		t.Fatalf("mixed functions: %+v", b)
 	}
 	// A <function=> with no <parameter=> body is not an action and yields nothing.
@@ -207,7 +207,7 @@ func TestParseExecuteXMLIgnoresNonExecFunction(t *testing.T) {
 	// A real execution call in the same reply is still salvaged; only the editor
 	// call is dropped.
 	mixed := editor + "<function=execute_bash><parameter=command>ls</parameter></function>"
-	if b := parseExecuteXML(mixed); len(b) != 1 || b[0].lang != "shell" || b[0].code != "ls" {
+	if b := parseExecuteXML(mixed); len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "ls" {
 		t.Fatalf("mixed editor+exec: %+v", b)
 	}
 	// The routed dialect that owns the tool-call shape drops the editor call too,
@@ -239,13 +239,13 @@ func TestIsExecFunc(t *testing.T) {
 // salvage when the reply carries no fence at all, so a fenced reply is never
 // re-read by the salvage and a fence-less tool call is still recovered.
 func TestParseMarkdownPrefersFenceThenSalvages(t *testing.T) {
-	if b := parseMarkdown("run this ```sh\nls\n```"); len(b) != 1 || b[0].lang != "sh" || b[0].code != "ls" {
+	if b := ParseMarkdown("run this ```sh\nls\n```"); len(b) != 1 || b[0].Lang != "sh" || b[0].Code != "ls" {
 		t.Fatalf("fenced reply: %+v", b)
 	}
-	if b := parseMarkdown("<tool_call><language>python</language><code>print(1)</code></tool_call>"); len(b) != 1 || b[0].lang != "python" || b[0].code != "print(1)" {
+	if b := ParseMarkdown("<tool_call><language>python</language><code>print(1)</code></tool_call>"); len(b) != 1 || b[0].Lang != "python" || b[0].Code != "print(1)" {
 		t.Fatalf("fence-less tool call: %+v", b)
 	}
-	if b := parseMarkdown("The issue is in the url check."); len(b) != 0 {
+	if b := ParseMarkdown("The issue is in the url check."); len(b) != 0 {
 		t.Fatalf("plain prose: %+v", b)
 	}
 }
