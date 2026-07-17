@@ -104,6 +104,18 @@ func TestParseHashToolCall(t *testing.T) {
 	if b := parseHashToolCall(py); len(b) != 1 || b[0].Lang != "python" || b[0].Code != "print(1)" {
 		t.Fatalf("python shape: %+v", b)
 	}
+	// Shape four: the code wrapped in its own four-backtick fence pair inside the
+	// tags, the variant hy3 produced via the Novita upstream on briefcase-2085.
+	// Cutting at the first fence line ate the code and the round ran nothing.
+	fenced := "Let me start by exploring the repository.<tool_calls:6124c78e>\n<tool_call:6124c78e>shell\n````\ncd /work && git log --oneline -3\n````\n</tool_call:6124c78e>\n</tool_calls:6124c78e>"
+	if b := parseHashToolCall(fenced); len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "cd /work && git log --oneline -3" {
+		t.Fatalf("fenced-body shape: %+v", b)
+	}
+	// The inner fence opener may name the language when the tag line does not.
+	fencedLang := "<tool_calls:abc123>\n<tool_call:abc123>\n```python\nprint(2)\n```\n</tool_call:abc123>"
+	if b := parseHashToolCall(fencedLang); len(b) != 1 || b[0].Lang != "python" || b[0].Code != "print(2)" {
+		t.Fatalf("fenced-body lang-on-opener shape: %+v", b)
+	}
 }
 
 // The lenient Markdown parser must catch a fence glued to the end of a prose

@@ -119,22 +119,20 @@ func For(model string) Dialect {
 // see. It opens with <tool_calls:HASH> (or the bare <tool_call:HASH>), names the
 // language on the next tagged line, then gives the code, sometimes wrapped in
 // ![CDATA[ ... ]] and often trailed by a stray Markdown fence the model appends.
-// The parse takes everything after the first hash opener, cuts that trailing
-// fence, drops the hash tags and the CDATA and invoke/parameter wrappers, reads
-// the first language word as the language, and takes the rest as the code. When
-// there is no hash opener at all it falls back to the Markdown parser, so a round
-// where hy3 does write a clean fence is still read.
+// Some upstream providers serve a further variant where the code sits inside its
+// own fence pair between the tags, four backticks open and close, so a parse that
+// cuts at the first fence line eats the code and leaves only the language word.
+// The parse drops the hash tags and the CDATA and invoke/parameter wrappers,
+// reads the first language word as the language, then reads the code either out
+// of that inner fence pair or up to the stray trailing fence. When there is no
+// hash opener at all it falls back to the Markdown parser, so a round where hy3
+// does write a clean fence is still read.
 func parseHashToolCall(reply string) []Block {
 	loc := hashToolOpenRe.FindStringIndex(reply)
 	if loc == nil {
 		return ParseMarkdown(reply)
 	}
 	body := reply[loc[1]:]
-	// Cut a stray closing Markdown fence the model appends after the code. The code
-	// itself never carries a line that is a bare fence, so this only drops the tail.
-	if i := strings.Index(body, "\n```"); i >= 0 {
-		body = body[:i]
-	}
 	// Drop the hash tool-call tags and the CDATA and invoke/parameter wrappers the
 	// model pads the action with, leaving the language line and the code.
 	body = hashToolTagRe.ReplaceAllString(body, "\n")
@@ -155,7 +153,34 @@ func parseHashToolCall(reply string) []Block {
 		lang = strings.ToLower(strings.TrimSpace(lines[i]))
 		i++
 	}
-	code := strings.Trim(strings.Join(lines[i:], "\n"), "\n")
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	end := len(lines)
+	if i < len(lines) {
+		if m := hashFenceOpenRe.FindStringSubmatch(strings.TrimSpace(lines[i])); m != nil {
+			// The code is wrapped in its own fence pair inside the tags. Read the
+			// language off the opener when the tag line did not name one, then take
+			// the lines up to the closing fence.
+			if lang == "" && m[1] != "" {
+				lang = strings.ToLower(m[1])
+			}
+			i++
+			end = i
+			for end < len(lines) && !hashFenceCloseRe.MatchString(strings.TrimSpace(lines[end])) {
+				end++
+			}
+		} else {
+			// Bare code, cut at the stray fence line the model appends after it. The
+			// code itself never carries a line that opens with a fence, so this only
+			// drops the tail.
+			end = i
+			for end < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[end]), "```") {
+				end++
+			}
+		}
+	}
+	code := strings.Trim(strings.Join(lines[i:end], "\n"), "\n")
 	if strings.TrimSpace(code) == "" {
 		return nil
 	}
@@ -259,6 +284,11 @@ var (
 
 	hashToolOpenRe = regexp.MustCompile(`<tool_calls?:[0-9a-fA-F]+>`)
 	hashToolTagRe  = regexp.MustCompile(`</?tool_calls?:[0-9a-fA-F]+>`)
+
+	// A fence line inside the hash costume: three or more backticks, optionally
+	// naming a language on the opener. The close is backticks alone.
+	hashFenceOpenRe  = regexp.MustCompile("^`{3,}[ \t]*([a-zA-Z0-9]*)[ \t]*$")
+	hashFenceCloseRe = regexp.MustCompile("^`{3,}[ \t]*$")
 
 	xmlToolCallRe = regexp.MustCompile(`(?s)<tool_call>(.*?)</tool_call>`)
 	xmlCodeRe     = regexp.MustCompile(`(?s)<code>(.*?)</code>`)
