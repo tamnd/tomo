@@ -252,6 +252,46 @@ func TestAnthropicSendsRequiredOutputCeiling(t *testing.T) {
 	}
 }
 
+// A gateway that fronts the anthropic API can forward a flaky upstream hiccup
+// as a 400 whose body names the forwarding failure, the same shape the openai
+// path already retries. The anthropic path must mark it transient too, so one
+// proxy hiccup does not sink a whole turn.
+func TestAnthropicGatewayUpstreamFailureIsTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"Upstream request failed"}}`)
+	}))
+	defer srv.Close()
+
+	p := &Anthropic{APIKey: "sk-test", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), Request{Model: "m", Messages: []Message{UserText("hi")}}, nil)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !Transient(err) {
+		t.Errorf("gateway upstream 400 should be transient, got non-transient: %v", err)
+	}
+}
+
+// A genuine malformed-request 400 stays permanent on the anthropic path, so a
+// real bug is not retried and masked.
+func TestAnthropicMalformed400IsPermanent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"messages: text content blocks must be non-empty"}}`)
+	}))
+	defer srv.Close()
+
+	p := &Anthropic{APIKey: "sk-test", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), Request{Model: "m", Messages: []Message{UserText("hi")}}, nil)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if Transient(err) {
+		t.Errorf("malformed 400 should be permanent, got transient: %v", err)
+	}
+}
+
 func TestAnthropicHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"bad key"}}`, http.StatusUnauthorized)
