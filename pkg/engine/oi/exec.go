@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tamnd/tomo/pkg/sandbox"
+	"github.com/tamnd/tomo/pkg/tool"
 )
 
 // maxOutput caps the combined output fed back for one code block. Open
@@ -76,18 +77,5 @@ func runBlock(ctx context.Context, box sandbox.Sandbox, b block) (string, bool) 
 // error origin at the head and the verdict at the tail both survive, and the
 // model is nudged to narrow the command itself.
 func clampOutput(s string) string {
-	if len(s) <= maxOutput {
-		return s
-	}
-	head := maxOutput * 3 / 4
-	tail := maxOutput - head
-	if i := strings.LastIndexByte(s[:head], '\n'); i > 0 {
-		head = i
-	}
-	tailStart := len(s) - tail
-	if i := strings.IndexByte(s[tailStart:], '\n'); i >= 0 {
-		tailStart += i + 1
-	}
-	notice := fmt.Sprintf("\n\n… [%d bytes elided; re-run against a smaller target or pipe through tail/grep for the rest] …\n\n", tailStart-head)
-	return s[:head] + notice + s[tailStart:]
+	return tool.Clamp(s, maxOutput, "; re-run against a smaller target or pipe through tail/grep for the rest")
 }

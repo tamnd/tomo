@@ -13,7 +13,6 @@ package cx
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/tamnd/tomo/pkg/agent"
@@ -65,19 +64,7 @@ const maxToolResult = 48 * 1024
 // failure (the assertion, the traceback, the summary), so keeping both ends
 // preserves the signal a head-only cut would throw away, at no extra tokens.
 func clampResult(s string) string {
-	if len(s) <= maxToolResult {
-		return s
-	}
-	head := maxToolResult * 3 / 4
-	tail := maxToolResult - head
-	if i := strings.LastIndexByte(s[:head], '\n'); i > 0 {
-		head = i
-	}
-	tailStart := len(s) - tail
-	if i := strings.IndexByte(s[tailStart:], '\n'); i >= 0 {
-		tailStart += i + 1
-	}
-	return s[:head] + fmt.Sprintf("\n\n… [%d bytes elided] …\n\n", tailStart-head) + s[tailStart:]
+	return tool.Clamp(s, maxToolResult, "")
 }
 
 // maxCallRetries is how many extra times a single model call is retried on a

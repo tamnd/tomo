@@ -344,9 +344,10 @@ func (a *Agent) runTool(ctx context.Context, b provider.Block, sink Sink) (resul
 	if a.Gate != nil {
 		a.Gate.Ingested(t.Class, isErr)
 	}
-	if len(out) > maxToolResult {
-		out = out[:maxToolResult] + "\n[truncated]"
-	}
+	// Head and tail both survive the cut: a long tool result front-loads its
+	// frame and back-loads its verdict, and a head-only cut used to eat the
+	// verdict.
+	out = tool.Clamp(out, maxToolResult, "")
 	if sink != nil {
 		sink.ToolEnd(b.Name, out, isErr)
 	}
