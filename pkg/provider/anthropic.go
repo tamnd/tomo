@@ -192,8 +192,12 @@ func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) (
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		e := fmt.Errorf("anthropic: %s: %s", resp.Status, strings.TrimSpace(string(msg)))
-		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		body := strings.TrimSpace(string(msg))
+		e := fmt.Errorf("anthropic: %s: %s", resp.Status, body)
+		// Same rule as the openai path: a 4xx whose body names a gateway or
+		// upstream failure is the proxy hiccuping, not the request being
+		// malformed, so it retries instead of sinking the turn.
+		if retryableStatus(resp.StatusCode, body) {
 			return nil, asTransient(e)
 		}
 		return nil, e
