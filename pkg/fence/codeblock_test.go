@@ -1,4 +1,4 @@
-package oi
+package fence
 
 import "testing"
 
@@ -8,11 +8,11 @@ func TestParseBlocksExtractsLanguageAndCode(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("blocks = %d, want 1", len(blocks))
 	}
-	if blocks[0].lang != "python" {
-		t.Errorf("lang = %q, want python", blocks[0].lang)
+	if blocks[0].Lang != "python" {
+		t.Errorf("lang = %q, want python", blocks[0].Lang)
 	}
-	if blocks[0].code != "import sys\nprint(sys.version)" {
-		t.Errorf("code = %q", blocks[0].code)
+	if blocks[0].Code != "import sys\nprint(sys.version)" {
+		t.Errorf("code = %q", blocks[0].Code)
 	}
 }
 
@@ -22,10 +22,10 @@ func TestParseBlocksHandlesMultipleAndProse(t *testing.T) {
 	if len(blocks) != 2 {
 		t.Fatalf("blocks = %d, want 2", len(blocks))
 	}
-	if blocks[0].lang != "sh" || blocks[0].code != "ls" {
+	if blocks[0].Lang != "sh" || blocks[0].Code != "ls" {
 		t.Errorf("block 0 = %+v", blocks[0])
 	}
-	if blocks[1].lang != "python" || blocks[1].code != "print(1)" {
+	if blocks[1].Lang != "python" || blocks[1].Code != "print(1)" {
 		t.Errorf("block 1 = %+v", blocks[1])
 	}
 }
@@ -33,7 +33,7 @@ func TestParseBlocksHandlesMultipleAndProse(t *testing.T) {
 func TestParseBlocksBareFenceHasNoLang(t *testing.T) {
 	reply := "```\necho hi\n```"
 	blocks := parseBlocks(reply)
-	if len(blocks) != 1 || blocks[0].lang != "" || blocks[0].code != "echo hi" {
+	if len(blocks) != 1 || blocks[0].Lang != "" || blocks[0].Code != "echo hi" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
@@ -43,7 +43,7 @@ func TestParseBlocksUnclosedFenceStillYields(t *testing.T) {
 	// far, so a truncated but runnable block is not silently dropped.
 	reply := "```python\nprint(1)\nprint(2)"
 	blocks := parseBlocks(reply)
-	if len(blocks) != 1 || blocks[0].code != "print(1)\nprint(2)" {
+	if len(blocks) != 1 || blocks[0].Code != "print(1)\nprint(2)" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
@@ -64,10 +64,10 @@ func TestParseBlocksGluedCloseOpen(t *testing.T) {
 	if len(blocks) != 2 {
 		t.Fatalf("blocks = %d, want 2 (%+v)", len(blocks), blocks)
 	}
-	if blocks[0].lang != "sh" || blocks[0].code != "ls" {
+	if blocks[0].Lang != "sh" || blocks[0].Code != "ls" {
 		t.Errorf("block 0 = %+v", blocks[0])
 	}
-	if blocks[1].lang != "python" || blocks[1].code != "print(1)" {
+	if blocks[1].Lang != "python" || blocks[1].Code != "print(1)" {
 		t.Errorf("block 1 = %+v", blocks[1])
 	}
 }
@@ -79,11 +79,11 @@ func TestParseBlocksGluedChain(t *testing.T) {
 	if len(blocks) != 3 {
 		t.Fatalf("blocks = %d, want 3 (%+v)", len(blocks), blocks)
 	}
-	if blocks[0].code != "a" || blocks[1].code != "b" || blocks[2].code != "c" {
-		t.Errorf("codes = %q %q %q", blocks[0].code, blocks[1].code, blocks[2].code)
+	if blocks[0].Code != "a" || blocks[1].Code != "b" || blocks[2].Code != "c" {
+		t.Errorf("codes = %q %q %q", blocks[0].Code, blocks[1].Code, blocks[2].Code)
 	}
-	if blocks[2].lang != "python" {
-		t.Errorf("block 2 lang = %q, want python", blocks[2].lang)
+	if blocks[2].Lang != "python" {
+		t.Errorf("block 2 lang = %q, want python", blocks[2].Lang)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestParseBlocksBareLongCloseIsNotReopen(t *testing.T) {
 	// open, so nothing after it is captured as a new block's code.
 	reply := "```python\nprint(1)\n``````\ntrailing prose"
 	blocks := parseBlocks(reply)
-	if len(blocks) != 1 || blocks[0].code != "print(1)" {
+	if len(blocks) != 1 || blocks[0].Code != "print(1)" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }
@@ -100,7 +100,7 @@ func TestParseBlocksBareLongCloseIsNotReopen(t *testing.T) {
 func TestParseBlocksTildeFence(t *testing.T) {
 	reply := "~~~python\nprint(1)\n~~~"
 	blocks := parseBlocks(reply)
-	if len(blocks) != 1 || blocks[0].lang != "python" || blocks[0].code != "print(1)" {
+	if len(blocks) != 1 || blocks[0].Lang != "python" || blocks[0].Code != "print(1)" {
 		t.Fatalf("blocks = %+v", blocks)
 	}
 }

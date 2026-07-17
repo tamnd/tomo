@@ -1,3 +1,12 @@
+// Package oi is a third agent engine for tomo, shaped after Open Interpreter:
+// the model does not call structured tools, it writes a fenced code block and
+// the engine runs it, feeds the output back, and loops until the model stops
+// emitting code. The appeal is for weak or cheap models, which write a Python or
+// shell block far more reliably than they emit well-formed function-call JSON, so
+// a single run-this-code primitive removes the tool-calling failure mode
+// entirely. It reuses tomo's provider, sandbox, and the default engine's Sink and
+// Gate types, and carries its own system prompt (prompts/system.md), so it drops
+// in wherever the default engine does.
 package oi
 
 import (
@@ -8,10 +17,16 @@ import (
 	"time"
 
 	"github.com/tamnd/tomo/pkg/agent"
+	"github.com/tamnd/tomo/pkg/fence"
 	"github.com/tamnd/tomo/pkg/provider"
 	"github.com/tamnd/tomo/pkg/sandbox"
 	"github.com/tamnd/tomo/pkg/tool"
 )
+
+// block is fence.Block: the parsing that lifts blocks out of a reply lives in
+// pkg/fence, shared with any other code-as-action engine, and this engine only
+// decides which blocks run and how.
+type block = fence.Block
 
 // Engine runs the Open Interpreter loop for tomo: the model writes a fenced code
 // block, the engine executes it in the workspace, feeds the output back, and
@@ -58,8 +73,8 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	// The dialect is chosen from the model: how this model natively writes an
 	// action, and the prompt hint that asks it for exactly that syntax. The hint
 	// rides on the system prompt so the model and the parser agree.
-	dia := dialectFor(e.Model)
-	system := e.System + dia.hint
+	dia := fence.For(e.Model)
+	system := e.System + dia.Hint
 	// The no-edit finish guard state: ran records that the model executed at least
 	// one block this turn, so the guard weighs in only on a turn that was actually
 	// coding, not a plain answer; editNudged keeps the nudge to a single firing.
@@ -102,7 +117,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 		}
 		turn = append(turn, provider.Message{Role: provider.RoleAssistant, Blocks: resp.Blocks})
 
-		parsed := dia.parse(assistantText(resp.Blocks))
+		parsed := dia.Parse(assistantText(resp.Blocks))
 		blocks := runnableBlocks(parsed)
 		if len(blocks) == 0 {
 			// A reply cut off at the token ceiling may have been mid-code: nudge it to
@@ -176,7 +191,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			results = append(results, provider.Text(label(i, len(blocks), out, isErr)))
 			// A verification block records whether the code is still red, so the finish
 			// guard can catch a turn ending on a failing check.
-			if looksLikeVerify(b.code) {
+			if looksLikeVerify(b.Code) {
 				verifyFailed = isErr
 			}
 		}
@@ -243,11 +258,11 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 // gate's reason, the same shape an execution error takes, so the model can react
 // to either.
 func (e *Engine) exec(ctx context.Context, b block, sink agent.Sink) (string, bool) {
-	canonical, _ := language(b.lang)
+	canonical, _ := language(b.Lang)
 	input, _ := json.Marshal(struct {
 		Language string `json:"language"`
 		Code     string `json:"code"`
-	}{canonical, b.code})
+	}{canonical, b.Code})
 	if sink != nil {
 		sink.ToolStart("execute", input)
 	}
@@ -302,7 +317,7 @@ func (e *Engine) stream(ctx context.Context, req provider.Request, sink agent.Si
 func runnableBlocks(all []block) []block {
 	out := all[:0]
 	for _, b := range all {
-		if _, ok := language(b.lang); ok {
+		if _, ok := language(b.Lang); ok {
 			out = append(out, b)
 		}
 	}

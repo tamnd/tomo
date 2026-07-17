@@ -163,11 +163,11 @@ var fileBlockLangs = map[string]bool{
 // pasted alongside a heredoc that actually writes it is not flagged.
 func droppedFileBlock(all []block) (lang string, ok bool) {
 	for _, b := range all {
-		if _, runnable := language(b.lang); runnable {
+		if _, runnable := language(b.Lang); runnable {
 			continue
 		}
-		if fileBlockLangs[b.lang] && strings.TrimSpace(b.code) != "" {
-			return b.lang, true
+		if fileBlockLangs[b.Lang] && strings.TrimSpace(b.Code) != "" {
+			return b.Lang, true
 		}
 	}
 	return "", false

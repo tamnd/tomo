@@ -44,18 +44,18 @@ func language(tag string) (canonical string, runnable bool) {
 // argument so no shell quoting can mangle it. The output is capped before it
 // goes back to the model.
 func runBlock(ctx context.Context, box sandbox.Sandbox, b block) (string, bool) {
-	canonical, runnable := language(b.lang)
+	canonical, runnable := language(b.Lang)
 	if !runnable {
 		// Not a runnable block: report it plainly rather than silently, so a model
 		// that fenced a diff or JSON learns nothing ran and can act on that.
-		return fmt.Sprintf("(the %q block was not run: only python and shell blocks execute)", b.lang), false
+		return fmt.Sprintf("(the %q block was not run: only python and shell blocks execute)", b.Lang), false
 	}
 	var argv []string
 	switch canonical {
 	case "python":
-		argv = []string{"python3", "-c", b.code}
+		argv = []string{"python3", "-c", b.Code}
 	default:
-		argv = []string{"sh", "-c", b.code}
+		argv = []string{"sh", "-c", b.Code}
 	}
 	out, err := box.Run(ctx, argv)
 	out = clampOutput(out)
