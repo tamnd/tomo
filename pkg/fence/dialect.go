@@ -105,6 +105,16 @@ func For(model string) Dialect {
 	switch {
 	case strings.Contains(id, "north-mini"):
 		return toolJSONDialect
+	// qwen3-coder served over ollama's OpenAI endpoint under the zero-tool
+	// code-as-action engine writes a plain Markdown fence: its native XML tool
+	// call only appears when a tool schema is passed, which this engine never
+	// does. The xmltoolcall hint actively breaks it, contradicting the base
+	// prompt's Markdown instruction so the model returns empty content. So the
+	// coder variant takes the default Markdown dialect and no hint, ahead of the
+	// general qwen rule that still fits the cloud qwen models which do emit the
+	// XML call unprompted.
+	case strings.Contains(id, "qwen3-coder"):
+		return markdownDialect
 	case strings.Contains(id, "nemotron"), strings.Contains(id, "hermes"), strings.Contains(id, "qwen"):
 		return xmlToolCallDialect
 	case strings.Contains(id, "hy3"):
@@ -427,6 +437,16 @@ func parseXMLToolCall(reply string) []Block {
 			continue
 		}
 		out = append(out, Block{Lang: langForFunc(fn[1]), Code: code})
+	}
+	// A tool-tuned model reaches for its native XML tool call only when it is
+	// served with a tool schema. The code-as-action engine advertises zero
+	// tools, and ollama's qwen3-coder over the OpenAI endpoint then writes a
+	// plain Markdown fence instead of the <function=...> call this dialect was
+	// bound for. When no tool call is present, fall back to the fence parser so
+	// that action is read instead of dropped, the same repair parseHashToolCall
+	// makes for hy3.
+	if len(out) == 0 {
+		return ParseMarkdown(reply)
 	}
 	return out
 }
