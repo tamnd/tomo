@@ -33,8 +33,14 @@ func (o *OpenAI) client() *http.Client {
 
 // oaMessage and friends are the wire shapes of chat completions.
 type oaMessage struct {
-	Role       string       `json:"role"`
-	Content    any          `json:"content,omitempty"`
+	Role string `json:"role"`
+	// Content has no omitempty: every message must carry a content field on
+	// the wire even when it is the empty string. Cloud OpenAI tolerates a
+	// missing or null assistant content, but a strict server (ollama's
+	// OpenAI-compat parser) rejects it with "invalid message content type:
+	// <nil>". Each build path below assigns a non-nil value, so the field is
+	// always a string or a content-part slice, never null.
+	Content    any          `json:"content"`
 	ToolCalls  []oaToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string       `json:"tool_call_id,omitempty"`
 }
@@ -89,9 +95,11 @@ func oaMessages(req Request) ([]oaMessage, error) {
 					return nil, fmt.Errorf("openai: unsupported assistant block %q", b.Type)
 				}
 			}
-			if text.Len() > 0 {
-				am.Content = text.String()
-			}
+			// Always assign, even when empty: an assistant turn that carried
+			// only a fenced action (the code-as-action engine strips the
+			// fence) has no text, and a nil content is rejected by strict
+			// servers. The empty string is accepted everywhere.
+			am.Content = text.String()
 			out = append(out, am)
 		case RoleUser:
 			var parts []oaContentPart

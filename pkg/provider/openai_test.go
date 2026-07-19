@@ -228,6 +228,38 @@ func TestOaMessagesInvalidToolArgsGuard(t *testing.T) {
 	}
 }
 
+// An assistant turn that carried only a fenced action has no text once the
+// code-as-action engine strips the fence. That message must still marshal a
+// "content" field on the wire (the empty string), because a strict server
+// (ollama's OpenAI-compat parser) rejects a missing or null content with
+// "invalid message content type: <nil>". Cloud OpenAI tolerated the omission,
+// which is why this only surfaced against a local endpoint.
+func TestOaMessagesEmptyAssistantContentIsPresent(t *testing.T) {
+	msgs, err := oaMessages(Request{Messages: []Message{{
+		Role:   RoleAssistant,
+		Blocks: []Block{{Type: BlockText, Text: ""}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %#v", msgs)
+	}
+	if msgs[0].Content == nil {
+		t.Fatalf("assistant content is nil, want empty string")
+	}
+	b, err := json.Marshal(msgs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"content":""`) {
+		t.Errorf("wire message must carry an empty content field, got %s", b)
+	}
+	if strings.Contains(string(b), `"content":null`) {
+		t.Errorf("wire message must not send null content, got %s", b)
+	}
+}
+
 // promptCacheKey must be stable for the same static prefix (so every round of a
 // run routes to one cache), sensitive to a prefix change (so a different agent or
 // a trimmed prompt gets its own cache), and empty when there is nothing to key

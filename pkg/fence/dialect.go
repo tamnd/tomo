@@ -66,11 +66,13 @@ var toolJSONDialect = Dialect{
 	Hint:  "\n\nEmit each action as a single JSON object and nothing else: {\"contents\":[{\"language\":\"python|sh\",\"text\":\"<code>\"}]}. Do not wrap it in Markdown. To finish, reply with plain prose and no JSON object.",
 }
 
-// xmlToolCallDialect fits the Hermes and Qwen family, which emit an XML tool call
-// like <tool_call><function=execute_bash><parameter=command>...</parameter>
-// </function></tool_call>. It maps the bash/shell function to a shell block and
-// a python function to a python block, reading the code from the command/code
-// parameter.
+// xmlToolCallDialect fits the Hermes and Nemotron family, which emit an XML tool
+// call like <tool_call><function=execute_bash><parameter=command>...</parameter>
+// </function></tool_call> unprompted. It maps the bash/shell function to a shell
+// block and a python function to a python block, reading the code from the
+// command/code parameter. The qwen family used to route here too, but over
+// ollama with no tool schema it writes a plain Markdown fence and the XML hint
+// breaks it, so it takes the Markdown dialect instead (see For).
 var xmlToolCallDialect = Dialect{
 	Name:  "xmltoolcall",
 	Parse: parseXMLToolCall,
@@ -105,7 +107,20 @@ func For(model string) Dialect {
 	switch {
 	case strings.Contains(id, "north-mini"):
 		return toolJSONDialect
-	case strings.Contains(id, "nemotron"), strings.Contains(id, "hermes"), strings.Contains(id, "qwen"):
+	// The qwen family, served over ollama's OpenAI endpoint under the zero-tool
+	// code-as-action engine, writes a plain Markdown fence. Its native XML tool
+	// call only appears when a tool schema is passed, which this engine never
+	// does, and the xmltoolcall hint actively breaks it: qwen3-coder returns
+	// empty content and qwen3:8b emits malformed <parameter> tags the parser
+	// cannot read. Any stray <function=...> call a differently-served qwen still
+	// emits is caught by the Markdown dialect's parseExecuteXML salvage, so
+	// Markdown is the safe binding for the whole family, with no hint (the base
+	// prompt already asks for a fence). The XML dialect stays for the
+	// Hermes/Nemotron models it was built for, which emit the clean tool call
+	// unprompted.
+	case strings.Contains(id, "qwen"):
+		return markdownDialect
+	case strings.Contains(id, "nemotron"), strings.Contains(id, "hermes"):
 		return xmlToolCallDialect
 	case strings.Contains(id, "hy3"):
 		return hashToolCallDialect
@@ -427,6 +442,16 @@ func parseXMLToolCall(reply string) []Block {
 			continue
 		}
 		out = append(out, Block{Lang: langForFunc(fn[1]), Code: code})
+	}
+	// A tool-tuned model reaches for its native XML tool call only when it is
+	// served with a tool schema. The code-as-action engine advertises zero
+	// tools, and ollama's qwen3-coder over the OpenAI endpoint then writes a
+	// plain Markdown fence instead of the <function=...> call this dialect was
+	// bound for. When no tool call is present, fall back to the fence parser so
+	// that action is read instead of dropped, the same repair parseHashToolCall
+	// makes for hy3.
+	if len(out) == 0 {
+		return ParseMarkdown(reply)
 	}
 	return out
 }

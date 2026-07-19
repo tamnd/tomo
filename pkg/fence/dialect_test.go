@@ -12,7 +12,9 @@ func TestDialectForByFamily(t *testing.T) {
 		{"opencode/north-mini-code-free", "tooljson"},
 		{"opencode/nemotron-3-ultra-free", "xmltoolcall"},
 		{"hermes-4", "xmltoolcall"},
-		{"qwen3.5-plus", "xmltoolcall"},
+		{"local/qwen3-coder:30b", "markdown"},
+		{"local/qwen3:8b", "markdown"},
+		{"qwen3.5-plus", "markdown"},
 		{"opencode/hy3-free", "hashtoolcall"},
 		{"deepseek-v4-flash-free", "markdown"},
 		{"something-unknown", "markdown"},
@@ -68,6 +70,24 @@ func TestXMLToolCallPythonAndMultiple(t *testing.T) {
 	blocks := parseXMLToolCall(reply)
 	if len(blocks) != 2 || blocks[0].Lang != "python" || blocks[0].Code != "print(1)" || blocks[1].Lang != "shell" || blocks[1].Code != "ls" {
 		t.Fatalf("blocks = %+v", blocks)
+	}
+}
+
+// A tool-tuned model served with no tool schema falls back to a plain Markdown
+// fence: ollama's qwen3-coder over the OpenAI endpoint, driven by the zero-tool
+// code-as-action engine, writes ```shell ... ``` instead of its native
+// <function=...> call. The xmltoolcall dialect must recover that fence rather
+// than drop the action and end the turn on nothing.
+func TestXMLToolCallFallsBackToMarkdownFence(t *testing.T) {
+	reply := "I'll run it.\n\n```shell\necho hi-from-local\n```"
+	blocks := parseXMLToolCall(reply)
+	if len(blocks) != 1 || blocks[0].Lang != "shell" || blocks[0].Code != "echo hi-from-local" {
+		t.Fatalf("blocks = %+v", blocks)
+	}
+	// A real XML tool call still wins when the model does emit one.
+	xml := "<function=execute_bash><parameter=command>ls</parameter></function>"
+	if b := parseXMLToolCall(xml); len(b) != 1 || b[0].Code != "ls" {
+		t.Fatalf("xml tool call regressed: %+v", b)
 	}
 }
 
