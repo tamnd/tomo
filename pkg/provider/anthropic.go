@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // Anthropic speaks the Messages API with SSE streaming.
@@ -31,7 +30,7 @@ func (a *Anthropic) client() *http.Client {
 	if a.Client != nil {
 		return a.Client
 	}
-	return &http.Client{Timeout: 10 * time.Minute}
+	return providerHTTPClient()
 }
 
 func (a *Anthropic) baseURL() string {

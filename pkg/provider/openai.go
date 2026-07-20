@@ -12,7 +12,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 )
 
 // OpenAI speaks the chat completions dialect, which is the lingua franca of
@@ -28,7 +27,7 @@ func (o *OpenAI) client() *http.Client {
 	if o.Client != nil {
 		return o.Client
 	}
-	return &http.Client{Timeout: 10 * time.Minute}
+	return providerHTTPClient()
 }
 
 // oaMessage and friends are the wire shapes of chat completions.
