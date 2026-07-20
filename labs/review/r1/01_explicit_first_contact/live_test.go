@@ -14,10 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
-
-const liveTimeout = 3 * time.Minute
 
 // TestLiveExplicitFirstContact runs the built command through pre-contact cases and one real model turn.
 // The counting endpoints make absence and presence of provider traffic observable instead of inferred from command output.
