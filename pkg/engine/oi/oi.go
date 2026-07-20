@@ -190,6 +190,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			}
 		}
 		var results []provider.Block
+		roundVerified := false
 		for i, b := range blocks {
 			out, isErr := e.exec(ctx, b, sink)
 			results = append(results, provider.Text(label(i, len(blocks), out, isErr)))
@@ -197,6 +198,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			// guard can catch a turn ending on a failing check.
 			if looksLikeVerify(b.Code) {
 				verifyFailed = isErr
+				roundVerified = i == len(blocks)-1
 			}
 		}
 
@@ -229,6 +231,15 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			sinceEdit = 0
 		} else {
 			sinceEdit++
+		}
+
+		// A response that both changed the tree and ended on a green verification
+		// has completed the edit/verify contract. Do not spend another model call
+		// merely asking it to paraphrase that success. Requiring the verification
+		// block to be last ensures no later action invalidated the check.
+		if roundWrote && roundVerified && !verifyFailed {
+			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
+			return turn, nil
 		}
 
 		// A hard limit ends the turn; the softer thresholds append a one-time nudge to

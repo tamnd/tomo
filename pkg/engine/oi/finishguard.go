@@ -2,6 +2,7 @@ package oi
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/tamnd/tomo/pkg/sandbox"
@@ -195,6 +196,7 @@ const verifyFailedNudge = "You are ending the turn, but the last test or build b
 // exits non-zero.
 var verifyMarkers = []string{
 	"pytest", "py.test", "unittest", "tox", "nox",
+	"py_compile", "assert ",
 	"go test", "go build", "go vet", "golangci-lint",
 	"npm test", "npm run test", "npm run build", "yarn test", "pnpm test",
 	"jest", "vitest", "mocha", "tsc ", "eslint",
@@ -218,22 +220,44 @@ func looksLikeVerify(code string) bool {
 	return false
 }
 
-// worktreeState returns the porcelain status of the workspace and whether it is a
-// git worktree at all. The caller compares the state at turn start with the state
-// at turn end: an unchanged state on a real worktree means the turn wrote nothing.
-// A non-worktree or a git error reports tracked=false, so the guard stays silent
-// rather than nudge a model that may have edited a plain directory.
+// worktreeState returns a content-sensitive workspace state and whether it could
+// be observed reliably. Git worktrees use porcelain status plus hashes for dirty
+// paths; plain directories use a bounded filesystem fingerprint.
 func (e *Engine) worktreeState(ctx context.Context) (state string, tracked bool) {
 	box := e.Box
 	if box == nil {
 		box, _ = sandbox.New("none", e.Workspace)
 	}
 	if out, err := box.Run(ctx, []string{"git", "rev-parse", "--is-inside-work-tree"}); err != nil || strings.TrimSpace(out) != "true" {
-		return "", false
+		if e.Workspace == "" {
+			return "", false
+		}
+		fingerprint, fingerprintErr := fingerprintWorkspace(e.Workspace)
+		return fingerprint, fingerprintErr == nil
 	}
 	out, err := box.Run(ctx, []string{"git", "status", "--porcelain"})
 	if err != nil {
 		return "", false
 	}
-	return out, true
+	// Porcelain records that an untracked file exists, but not its contents. A
+	// task workspace often starts with an untracked starter file, so editing that
+	// file leaves the raw status text unchanged. Fingerprint every dirty path to
+	// distinguish those real edits; deleted paths retain their status-only state.
+	paths := make([]string, 0, len(dirtyPaths(out)))
+	for path := range dirtyPaths(out) {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	var fingerprint strings.Builder
+	fingerprint.WriteString(out)
+	for _, path := range paths {
+		hash, hashErr := box.Run(ctx, []string{"git", "hash-object", "--", path})
+		if hashErr == nil {
+			fingerprint.WriteByte(0)
+			fingerprint.WriteString(path)
+			fingerprint.WriteByte('=')
+			fingerprint.WriteString(strings.TrimSpace(hash))
+		}
+	}
+	return fingerprint.String(), true
 }

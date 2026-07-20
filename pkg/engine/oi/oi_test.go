@@ -141,6 +141,27 @@ func TestTurnRunsShellBlock(t *testing.T) {
 	}
 }
 
+// A coding response that writes the change and ends on a green focused check is
+// already complete. The engine must not buy a second model call just to receive
+// a prose acknowledgement of the successful verification.
+func TestTurnStopsAfterVerifiedEdit(t *testing.T) {
+	sp := &scriptProvider{responses: []*provider.Response{
+		reply("```sh\nwrite solution.py\npython3 - <<'PY'\nassert 1 + 1 == 2\nPY\n```"),
+	}}
+	box := &gitBox{}
+	e := &Engine{Provider: sp, Model: "test", Box: box}
+	msgs, err := e.Turn(context.Background(), nil, provider.UserText("fix"), &recordSink{})
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if len(sp.requests) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(sp.requests))
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want user, assistant action, and result", len(msgs))
+	}
+}
+
 // MaxRounds bounds a loop that keeps emitting code, standing in for OI's budget
 // break so a non-converging run cannot spin forever.
 func TestTurnMaxRoundsCaps(t *testing.T) {
@@ -166,6 +187,25 @@ func TestTurnMaxRoundsCaps(t *testing.T) {
 type gitBox struct {
 	dirty bool
 	calls [][]string
+}
+
+type untrackedBox struct{ hash string }
+
+func (b *untrackedBox) Name() string { return "untracked" }
+func (b *untrackedBox) Run(_ context.Context, argv []string) (string, error) {
+	if argv[0] != "git" {
+		return "", nil
+	}
+	switch argv[1] {
+	case "rev-parse":
+		return "true\n", nil
+	case "status":
+		return "?? solution.py\n", nil
+	case "hash-object":
+		return b.hash + "\n", nil
+	default:
+		return "", nil
+	}
 }
 
 func (b *gitBox) Name() string { return "git" }
@@ -198,6 +238,23 @@ func countNudges(msgs []provider.Message) int {
 		}
 	}
 	return n
+}
+
+func TestWorktreeStateFingerprintsUntrackedFileContents(t *testing.T) {
+	box := &untrackedBox{hash: "before"}
+	e := &Engine{Box: box}
+	before, ok := e.worktreeState(context.Background())
+	if !ok {
+		t.Fatal("worktree was not detected")
+	}
+	box.hash = "after"
+	after, ok := e.worktreeState(context.Background())
+	if !ok {
+		t.Fatal("worktree was not detected after edit")
+	}
+	if before == after {
+		t.Fatalf("untracked file state did not change: %q", before)
+	}
 }
 
 // The guard nudges a model that ran code but ends with a clean worktree, and once
