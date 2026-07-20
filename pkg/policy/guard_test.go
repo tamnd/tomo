@@ -94,7 +94,7 @@ func TestGuardTaintFlow(t *testing.T) {
 	if ok, _ := g.Allow(context.Background(), "fetch", tool.ClassNet, nil); !ok {
 		t.Fatal("net should be allowed")
 	}
-	g.Ingested(tool.ClassNet, false)
+	g.Ingested("fetch", tool.ClassNet, false)
 	if !g.Tainted() {
 		t.Fatal("net result should taint the session")
 	}
@@ -108,15 +108,27 @@ func TestGuardTaintFlow(t *testing.T) {
 	}
 }
 
-func TestIngestedOnlyTaintsOnSuccessfulNet(t *testing.T) {
-	g := NewGuard(New(Config{}), nil, nil)
-	g.Ingested(tool.ClassRead, false)
-	g.Ingested(tool.ClassNet, true) // errored fetch
+func TestIngestedTaintsOnSuccessfulNetOrExternalResult(t *testing.T) {
+	e := New(Config{})
+	e.MarkExternal("mcp_read")
+	g := NewGuard(e, nil, nil)
+	g.Ingested("read", tool.ClassRead, false)
+	g.Ingested("fetch", tool.ClassNet, true) // errored fetch
 	if g.Tainted() {
-		t.Error("only a successful net call should taint")
+		t.Error("builtin read and failed fetch must not taint")
 	}
-	g.Ingested(tool.ClassNet, false)
+	g.Ingested("mcp_read", tool.ClassRead, false)
 	if !g.Tainted() {
-		t.Error("successful net call should taint")
+		t.Error("successful external read should taint regardless of its declared class")
+	}
+}
+
+func TestExternalErrorTaintsBecauseItsTextEntersContext(t *testing.T) {
+	e := New(Config{})
+	e.MarkExternal("mcp_read")
+	g := NewGuard(e, nil, nil)
+	g.Ingested("mcp_read", tool.ClassRead, true)
+	if !g.Tainted() {
+		t.Error("external error text enters context and should taint")
 	}
 }

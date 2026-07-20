@@ -269,7 +269,7 @@ func (e *Engine) runTool(ctx context.Context, b provider.Block, sink agent.Sink)
 		out, isErr = err.Error(), true
 	}
 	if e.Gate != nil {
-		e.Gate.Ingested(t.Class, isErr)
+		e.Gate.Ingested(t.Name, t.Class, isErr)
 	}
 	out = clampResult(out)
 	if sink != nil {

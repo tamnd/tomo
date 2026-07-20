@@ -43,16 +43,15 @@ func TestTaintEscalatesWriteAndExec(t *testing.T) {
 	}
 }
 
-func TestPerToolRuleWinsAndIsNotEscalated(t *testing.T) {
+func TestDenyRuleWinsAndAllowRuleIsEscalatedAfterTaint(t *testing.T) {
 	e := New(Config{Exec: "allow", Rules: map[string]string{"shell": "deny", "trusted_writer": "allow"}})
 
 	if got, _ := e.Decide("shell", tool.ClassExec, false); got != Deny {
 		t.Errorf("rule deny not applied: %s", got)
 	}
-	// An explicit allow rule is the user's considered choice; taint does not
-	// second-guess it.
-	if got, _ := e.Decide("trusted_writer", tool.ClassWrite, true); got != Allow {
-		t.Errorf("explicit rule should survive taint, got %s", got)
+	// Trusting a writer in a clean session does not authorize untrusted content to drive it later in the same session.
+	if got, _ := e.Decide("trusted_writer", tool.ClassWrite, true); got != Ask {
+		t.Errorf("explicit allow should be re-confirmed after taint, got %s", got)
 	}
 }
 

@@ -88,25 +88,35 @@ func orDefault(s string, def Decision) Decision {
 	return ParseDecision(s)
 }
 
-// Decide returns the decision for one call. tainted is true once the session
-// has pulled in untrusted external content; in that state a write or exec that
-// would normally run is escalated to ask, because the model's instructions may
-// no longer be entirely the user's. A per-tool rule still wins: an explicit
-// allow or deny is the user's considered choice and is not second-guessed.
+// External reports whether name belongs to code outside tomo's reviewed tool surface.
+// The guard uses this after a successful call because an external tool can return injected content regardless of its declared capability class.
+func (e *Engine) External(name string) bool { return e.external[name] }
+
+// Decide returns the decision for one call.
+// Tainted is true once the session has pulled in untrusted external content.
+// A tainted write or exec that would normally run is escalated to ask because the instructions may no longer be entirely the user's.
+// A deny rule always wins.
+// An allow rule is re-confirmed after taint because approving a trusted writer in clean sessions does not let injected content drive it.
 func (e *Engine) Decide(name string, class tool.Class, tainted bool) (Decision, string) {
-	if dec, ok := e.rules[name]; ok {
-		return dec, fmt.Sprintf("rule for %q", name)
+	dec, ruled := e.rules[name]
+	if ruled && dec == Deny {
+		return Deny, fmt.Sprintf("rule for %q", name)
 	}
-	dec := e.class[class]
-	if dec == "" {
-		// An unknown class is not something we reasoned about: fail closed.
-		return Ask, fmt.Sprintf("unknown capability %q", class)
-	}
-	if e.external[name] && dec == Allow {
-		return Ask, fmt.Sprintf("external tool %q defaults to ask", name)
+	if !ruled {
+		dec = e.class[class]
+		if dec == "" {
+			// An unknown class is not something we reasoned about: fail closed.
+			return Ask, fmt.Sprintf("unknown capability %q", class)
+		}
 	}
 	if tainted && dec == Allow && (class == tool.ClassWrite || class == tool.ClassExec) {
 		return Ask, fmt.Sprintf("%s escalated: session touched untrusted content", class)
+	}
+	if !ruled && e.external[name] && dec == Allow {
+		return Ask, fmt.Sprintf("external tool %q defaults to ask", name)
+	}
+	if ruled {
+		return dec, fmt.Sprintf("rule for %q", name)
 	}
 	return dec, string(class) + " default"
 }

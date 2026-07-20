@@ -220,7 +220,7 @@ func (e *Engine) exec(ctx context.Context, b block, sink agent.Sink) (string, bo
 	}
 	out, isErr := runBlock(ctx, box, b)
 	if e.Gate != nil {
-		e.Gate.Ingested(tool.ClassExec, isErr)
+		e.Gate.Ingested("execute", tool.ClassExec, isErr)
 	}
 	if sink != nil {
 		sink.ToolEnd("execute", out, isErr)

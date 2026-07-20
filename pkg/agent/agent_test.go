@@ -153,7 +153,9 @@ func (d *denyGate) Allow(_ context.Context, name string, _ tool.Class, _ json.Ra
 	}
 	return true, ""
 }
-func (d *denyGate) Ingested(class tool.Class, _ bool) { d.ingested = append(d.ingested, class) }
+func (d *denyGate) Ingested(_ string, class tool.Class, _ bool) {
+	d.ingested = append(d.ingested, class)
+}
 
 func TestTurnGateDeniedBecomesErrorResult(t *testing.T) {
 	p := &scriptProvider{responses: []*provider.Response{

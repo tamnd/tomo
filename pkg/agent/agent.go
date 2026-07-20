@@ -29,7 +29,7 @@ type Gate interface {
 	// result, so a refusal becomes something the model can work around.
 	Allow(ctx context.Context, name string, class tool.Class, input json.RawMessage) (bool, string)
 	// Ingested is called after a tool ran so the gate can track taint.
-	Ingested(class tool.Class, isErr bool)
+	Ingested(name string, class tool.Class, isErr bool)
 }
 
 // Agent binds a provider, a toolset, and the policy gate for the turn loop.
@@ -342,7 +342,7 @@ func (a *Agent) runTool(ctx context.Context, b provider.Block, sink Sink) (resul
 		out, isErr = err.Error(), true
 	}
 	if a.Gate != nil {
-		a.Gate.Ingested(t.Class, isErr)
+		a.Gate.Ingested(t.Name, t.Class, isErr)
 	}
 	// Head and tail both survive the cut: a long tool result front-loads its
 	// frame and back-loads its verdict, and a head-only cut used to eat the
