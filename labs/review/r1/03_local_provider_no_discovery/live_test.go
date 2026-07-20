@@ -106,7 +106,7 @@ func runLocalProviderProof(t *testing.T, live bool, apiKey string) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(work, "local.yaml")
-	config := fmt.Sprintf("default_model: local/%s\ndata_dir: %q\nproviders:\n  local:\n    type: openai\n    api_key: ${OPENCODE_API_KEY}\n    base_url: %q\npolicy:\n  read: allow\n  net: deny\n  write: deny\n  exec: deny\nsandbox: none\n", envOr("TOMO_REVIEW_MODEL", "north-mini-code-free"), filepath.Join(work, "data"), localEndpoint.URL+"/v1")
+	config := fmt.Sprintf("default_model: local/%s\ndata_dir: %q\nproviders:\n  local:\n    type: openai\n    api_key: ${OPENCODE_API_KEY}\n    base_url: %q\npolicy:\n  read: allow\n  net: deny\n  write: deny\n  exec: deny\nsandbox: none\n", reviewModel(t), filepath.Join(work, "data"), localEndpoint.URL+"/v1")
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -180,4 +180,14 @@ func envOr(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func reviewModel(t *testing.T) string {
+	t.Helper()
+	model := envOr("TOMO_REVIEW_MODEL", "north-mini-code-free")
+	lower := strings.ToLower(model)
+	if strings.HasPrefix(lower, "gpt-") || !strings.HasSuffix(lower, "-free") {
+		t.Fatalf("TOMO_REVIEW_MODEL must select a free Zen model and must not select gpt-*: %q", model)
+	}
+	return model
 }
