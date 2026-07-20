@@ -114,11 +114,11 @@ func (g *Guard) Allow(ctx context.Context, name string, class tool.Class, input 
 	return false, "the user declined to run " + name
 }
 
-// Ingested updates taint after a tool ran. A successful network call is the
-// moment untrusted content enters the session, so from then on writes and
-// exec escalate to approval.
-func (g *Guard) Ingested(class tool.Class, isErr bool) {
-	if isErr || class != tool.ClassNet {
+// Ingested updates taint after a tool ran.
+// A successful network call or any external tool result introduces untrusted content, so later writes and exec calls escalate to approval.
+// Externality is keyed by the registered tool name instead of trusting a third party to classify itself as net.
+func (g *Guard) Ingested(name string, class tool.Class, isErr bool) {
+	if !g.engine.External(name) && (isErr || class != tool.ClassNet) {
 		return
 	}
 	g.mu.Lock()
