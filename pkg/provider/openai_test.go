@@ -150,6 +150,63 @@ func TestOpenAIStreamTruncatedToolCall(t *testing.T) {
 	}
 }
 
+// Some models (gpt-oss on ollama) stream an empty content and place their whole
+// reply, fenced commands included, in the reasoning channel. The turn text must
+// fall back to reasoning so a code-as-action engine sees the command instead of
+// a blank reply. A normal model whose answer is in content is unaffected.
+func TestOpenAIStreamReasoningFallback(t *testing.T) {
+	const fixture = `data: {"choices":[{"delta":{"content":null,"reasoning":"Let me fix it.\n"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"reasoning":"` + "```bash\\nedit file\\n```" + `"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, fixture)
+	}))
+	defer srv.Close()
+
+	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+	resp, err := p.Stream(context.Background(), Request{Model: "gpt-oss", Messages: []Message{UserText("fix")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Blocks) != 1 || resp.Blocks[0].Type != BlockText {
+		t.Fatalf("blocks = %+v, want one text block from reasoning", resp.Blocks)
+	}
+	if got := resp.Blocks[0].Text; !strings.Contains(got, "edit file") {
+		t.Errorf("reasoning text not surfaced: %q", got)
+	}
+}
+
+// When a model returns both content and reasoning, only content is the answer;
+// reasoning must not be appended, or normal reasoning models would double-speak.
+func TestOpenAIStreamContentWinsOverReasoning(t *testing.T) {
+	const fixture = `data: {"choices":[{"delta":{"reasoning":"thinking hard"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":"the answer"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, fixture)
+	}))
+	defer srv.Close()
+
+	p := &OpenAI{APIKey: "sk-test", BaseURL: srv.URL + "/v1"}
+	resp, err := p.Stream(context.Background(), Request{Model: "r1", Messages: []Message{UserText("q")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Blocks) != 1 || resp.Blocks[0].Text != "the answer" {
+		t.Fatalf("blocks = %+v, want only the content text", resp.Blocks)
+	}
+}
+
 // A gateway that drops a completion delivers an error payload as an SSE data
 // line rather than closing cleanly. Without surfacing it, the call would look
 // like a blank successful reply and the turn would end having done nothing.

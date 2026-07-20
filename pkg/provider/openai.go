@@ -264,8 +264,16 @@ func gatewayUpstreamFailure(body string) bool {
 type oaChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content string `json:"content"`
+			// Reasoning carries the model's thinking channel. Most reasoning
+			// models put their answer in Content and only expose thinking here,
+			// but some (notably gpt-oss served by ollama) return an empty
+			// Content and place their entire response, fenced commands and all,
+			// in Reasoning. We capture it so a content-less turn is not read as
+			// a blank reply. Both key spellings are seen in the wild.
+			Reasoning        string `json:"reasoning"`
+			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Function struct {
@@ -300,6 +308,7 @@ type oaChunk struct {
 func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 	out := &Response{StopReason: StopEndTurn}
 	var text strings.Builder
+	var reason strings.Builder
 	type call struct {
 		id   string
 		name string
@@ -331,6 +340,12 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 			if emit != nil {
 				emit(Event{Type: EventText, Text: c.Delta.Content})
 			}
+		}
+		if c.Delta.Reasoning != "" {
+			reason.WriteString(c.Delta.Reasoning)
+		}
+		if c.Delta.ReasoningContent != "" {
+			reason.WriteString(c.Delta.ReasoningContent)
 		}
 		for _, tc := range c.Delta.ToolCalls {
 			cur := calls[tc.Index]
@@ -368,6 +383,14 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 
 	if text.Len() > 0 {
 		out.Blocks = append(out.Blocks, Text(text.String()))
+	} else if reason.Len() > 0 && len(calls) == 0 {
+		// The turn produced no content and no native tool call, only a thinking
+		// channel. A model like gpt-oss puts its real answer (and any fenced
+		// code-as-action command) here, so hand it downstream as the turn text
+		// rather than reporting a blank reply the engine ends on. Guarded on
+		// empty content and no tool calls so normal reasoning models, whose
+		// answer is in content or in tool_calls, are unaffected.
+		out.Blocks = append(out.Blocks, Text(reason.String()))
 	}
 	idxs := make([]int, 0, len(calls))
 	for i := range calls {
