@@ -14,9 +14,20 @@ import (
 
 // Provider is one model backend entry.
 type Provider struct {
-	Type    string `yaml:"type"` // "anthropic" or "openai"
-	APIKey  string `yaml:"api_key"`
-	BaseURL string `yaml:"base_url"`
+	Type         string             `yaml:"type"` // "anthropic" or "openai"
+	APIKey       string             `yaml:"api_key"`
+	BaseURL      string             `yaml:"base_url"`
+	Pricing      *Pricing           `yaml:"pricing"`
+	ModelPricing map[string]Pricing `yaml:"model_pricing"`
+}
+
+// Pricing snapshots public list rates in USD per one million tokens. A
+// present block with zero rates marks a free or locally hosted provider.
+type Pricing struct {
+	Input       float64 `yaml:"input"`
+	CachedInput float64 `yaml:"cached_input"`
+	CacheWrite  float64 `yaml:"cache_write"`
+	Output      float64 `yaml:"output"`
 }
 
 // Config is the whole file. Policy is left as a raw map so pkg/config need
@@ -24,6 +35,7 @@ type Provider struct {
 type Config struct {
 	DefaultModel string              `yaml:"default_model"`
 	Providers    map[string]Provider `yaml:"providers"`
+	Tracing      Tracing             `yaml:"tracing"`
 	Policy       Policy              `yaml:"policy"`
 	Sandbox      string              `yaml:"sandbox"`
 	Channels     Channels            `yaml:"channels"`
@@ -33,6 +45,19 @@ type Config struct {
 	Workers      map[string]Worker   `yaml:"workers"`
 	DataDir      string              `yaml:"data_dir"`
 	Workspace    string              `yaml:"workspace"`
+}
+
+// Tracing controls the normalized model-call ledger. Enabled defaults to true
+// when omitted. Dir defaults to <data_dir>/traces.
+type Tracing struct {
+	Enabled *bool  `yaml:"enabled"`
+	Dir     string `yaml:"dir"`
+}
+
+// TraceEnabled reports whether model-call tracing is active. A pointer keeps
+// an omitted value distinct from an explicit false value.
+func (c *Config) TraceEnabled() bool {
+	return c.Tracing.Enabled == nil || *c.Tracing.Enabled
 }
 
 // Worker is a named specialist that handles some conversations in its own
@@ -153,6 +178,9 @@ func (c *Config) applyDefaults() {
 		if home, err := os.UserHomeDir(); err == nil {
 			c.DataDir = filepath.Join(home, ".tomo")
 		}
+	}
+	if c.Tracing.Dir == "" {
+		c.Tracing.Dir = filepath.Join(c.DataDir, "traces")
 	}
 	c.Workspace = resolveWorkspace(c.Workspace)
 	if c.Heartbeat.Enabled {

@@ -193,6 +193,33 @@ Lists the conversations in the ledger as a table of name, channel, message count
 Prints a hint when there are none yet.
 Takes no positional arguments.
 
+## traces
+
+```
+tomo traces
+tomo traces list [flags]
+tomo traces summary [flags]
+tomo traces export RUN_ID [-o FILE] [--format sts|native]
+tomo traces export-all OUTPUT_DIR [flags]
+```
+
+Inspects the normalized model-call ledger. The default command prints aggregate run, call, failure, detailed token, priced cost, duration, and deduplicated-object totals. `list` filters individual runs by exact model or provider, task identifier or label, run date, and starting time. `export` writes Hugging Face Session Trace Simple Format JSONL by default, ready for a dataset or Storage Bucket. `--format native` writes tomo's lossless resolved JSON document. `export-all` materializes every matching run under `year/month/day/provider/model/task/run.jsonl`, ready to upload as one dataset.
+
+The ledger stores repeated prompt components once by content hash, so a multi-round conversation does not copy its entire earlier transcript into every trace entry.
+
+| Flag | Commands | Meaning |
+|------|----------|---------|
+| `--model` | `list`, `summary` | Exact model identifier. |
+| `--provider` | `list`, `summary` | Exact configured provider name. |
+| `--task` | `list`, `summary` | Exact task identifier or task-label substring. |
+| `--date` | `list`, `summary` | Run date in `YYYY-MM-DD` form. |
+| `--since` | `list`, `summary` | Inclusive RFC3339 starting time. |
+| `--json` | `list`, `summary` | Machine-readable output. |
+| `--limit` | `list` | Maximum runs, default 50. |
+| `-o`, `--output` | `export` | Write the resolved run to a file instead of standard output. |
+| `--format` | `export` | `sts` for upload-ready Hugging Face trace JSONL, or `native` for lossless resolved JSON. Default `sts`. |
+| `--model`, `--provider`, `--task`, `--date`, `--since` | `export-all` | Materialize only matching runs. |
+
 ## channel
 
 ```

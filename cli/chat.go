@@ -27,6 +27,7 @@ import (
 	"github.com/tamnd/tomo/pkg/skill"
 	"github.com/tamnd/tomo/pkg/store"
 	"github.com/tamnd/tomo/pkg/tool"
+	"github.com/tamnd/tomo/pkg/trace"
 )
 
 // engine is the agent loop a turn runs on. Every engine is driven through this
@@ -291,7 +292,7 @@ func resolveParts(cfg *config.Config, b agentBuild, extra ...tool.Tool) (agentPa
 	if err != nil {
 		return agentParts{}, err
 	}
-	p, err := provider.Build(pc)
+	p, err := buildProvider(cfg, name, pc)
 	if err != nil {
 		return agentParts{}, fmt.Errorf("provider %s: %w", name, err)
 	}
@@ -382,7 +383,7 @@ func buildCurator(cfg *config.Config, b curatorBuild) (*curator.Curator, error) 
 	if err != nil {
 		return nil, err
 	}
-	p, err := provider.Build(pc)
+	p, err := buildProvider(cfg, name, pc)
 	if err != nil {
 		return nil, fmt.Errorf("provider %s: %w", name, err)
 	}
@@ -393,6 +394,46 @@ func buildCurator(cfg *config.Config, b curatorBuild) (*curator.Curator, error) 
 		Skills:   &skill.Store{Dir: orDefault(b.skillsDir, filepath.Join(cfg.DataDir, "skills"))},
 		Drafts:   &skill.Store{Dir: orDefault(b.draftsDir, filepath.Join(cfg.DataDir, "skill-drafts"))},
 	}, nil
+}
+
+// buildProvider applies the process-wide model trace policy at the single
+// construction boundary shared by interactive turns, workers, curators, and
+// planners. The trace wrapper is transparent to every engine.
+func buildProvider(cfg *config.Config, name string, pc config.Provider) (provider.Provider, error) {
+	p, err := provider.Build(pc)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.TraceEnabled() {
+		return p, nil
+	}
+	dir := cfg.Tracing.Dir
+	if dir == "" && cfg.DataDir != "" {
+		dir = filepath.Join(cfg.DataDir, "traces")
+	}
+	if dir == "" {
+		return p, nil
+	}
+	var pricing *trace.Pricing
+	if pc.Pricing != nil {
+		pricing = &trace.Pricing{
+			InputUSDPerMillion:      pc.Pricing.Input,
+			CachedUSDPerMillion:     pc.Pricing.CachedInput,
+			CacheWriteUSDPerMillion: pc.Pricing.CacheWrite,
+			OutputUSDPerMillion:     pc.Pricing.Output,
+		}
+	}
+	pricingByModel := make(map[string]trace.Pricing, len(pc.ModelPricing))
+	for model, rates := range pc.ModelPricing {
+		pricingByModel[model] = trace.Pricing{
+			InputUSDPerMillion: rates.Input, CachedUSDPerMillion: rates.CachedInput,
+			CacheWriteUSDPerMillion: rates.CacheWrite, OutputUSDPerMillion: rates.Output,
+		}
+	}
+	return trace.Wrap(p, trace.Options{
+		Dir: dir, Provider: name, Pricing: pricing, PricingByModel: pricingByModel,
+		OnError: func(err error) { fmt.Fprintf(os.Stderr, "warning: model trace was not recorded: %v\n", err) },
+	})
 }
 
 // orDefault returns v when set, otherwise the fallback.

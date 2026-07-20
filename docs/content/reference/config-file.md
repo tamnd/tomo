@@ -42,6 +42,17 @@ providers:
     type: anthropic
     api_key: ${ANTHROPIC_API_KEY}
     base_url: ""
+    pricing:
+      input: 3
+      cached_input: 0.30
+      cache_write: 3.75
+      output: 15
+    model_pricing:
+      smaller-model:
+        input: 0.25
+        cached_input: 0.025
+        cache_write: 0.3125
+        output: 1.50
 ```
 
 A map from a provider name to a backend.
@@ -52,10 +63,45 @@ The name on the left is what `default_model` and `--model` reference before the 
 | `type` | The backend dialect: `anthropic` or `openai`. Anything speaking the OpenAI chat completions dialect uses `openai`. |
 | `api_key` | The provider key. Usually a `${VAR}` reference. |
 | `base_url` | Override the endpoint. Point it at a local server or a gateway; leave it empty for the provider's own API. |
+| `pricing` | Optional list-rate snapshot in USD per one million tokens. Omit it when rates are unknown. An explicit all-zero block marks a free or local model. |
+| `model_pricing` | Optional rates keyed by exact model ID. A matching model overrides the provider-level `pricing` block. |
+
+The pricing keys are `input`, `cached_input`, `cache_write`, and `output`. Use `model_pricing` when one gateway serves models with different rates. tomo records the selected rates on every call, so later rate changes do not rewrite historical costs. Fresh input, cache reads, cache writes, and output are costed separately. A provider that does not report one token category records zero for that category.
 
 You can define as many providers as you like and switch between them per command with `--model`.
 
 A turn runs its tool-use rounds until the model ends the turn on its own, so a long multi-step task runs to completion.
+
+## tracing
+
+```yaml
+tracing:
+  enabled: true
+  dir: ~/.tomo/traces
+```
+
+Model calls are captured by default in a normalized SQLite ledger. The ledger stores each distinct system prompt, tool set, message, and response once under a content hash. Calls reference those objects instead of copying the growing conversation into every record. Runs are indexed by date, provider, model, and a stable task identifier derived from the first user message. WAL mode, a busy timeout, bounded retries, and short transactions allow several tomo processes to write to the same ledger concurrently.
+
+Credentials are redacted before content is stored. The trace directory is created with mode `0700` and the ledger with mode `0600`. Traces can still contain private prompts, source code, and model output, so protect the data directory accordingly. Set `enabled: false` to retain no model content.
+
+Use `tomo traces list` to filter runs and `tomo traces summary` to aggregate usage, failures, exact cost components, and priced versus unpriced calls. `tomo traces export RUN_ID` produces Hugging Face Session Trace Simple Format JSONL by default. The file is ready for a Hugging Face dataset or Storage Bucket and renders in the agent trace viewer. `--format native` produces tomo's lossless resolved JSON shape instead.
+
+`tomo traces export-all DATASET_DIR` materializes all matching sessions under a date, provider, model, task, and run hierarchy. The ledger stays deduplicated until an export is explicitly requested. Upload the resulting directory to a Hugging Face dataset or Storage Bucket.
+
+Older tomo-labs proxy captures can be imported once with:
+
+```sh
+go run ./scripts/migrate-legacy-traces --source "$HOME/data" --destination "$HOME/data/tomo-traces-v2"
+```
+
+The migration is resumable, never deletes source files, records a SHA-256 manifest of every selected source file, verifies run and call counts, runs SQLite's integrity check, and writes `migration-report.json` with source size, ledger size, and logical savings.
+
+Credential-like values are redacted, but traces may still contain private prompts, source code, local paths, tool output, screenshots, and personal data. Review exports before publishing them or keep the destination dataset private.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Capture normalized model-call traces. |
+| `dir` | `traces` under the data dir | Directory containing `trace.sqlite`. |
 
 ## policy
 
@@ -292,7 +338,7 @@ See the [workers guide](/guides/workers/).
 data_dir: ~/.tomo
 ```
 
-Where tomo keeps everything: the config, the `tomo.db` ledger, the `audit.log`, and the `memory`, `skills`, and `skill-drafts` dirs.
+Where tomo keeps everything: the config, the `tomo.db` ledger, the `audit.log`, normalized model traces, and the `memory`, `skills`, and `skill-drafts` dirs.
 Defaults to `~/.tomo`.
 
 ## workspace
@@ -324,6 +370,10 @@ providers:
     type: openai
     base_url: http://gamingpc:8000/v1
     api_key: ${LOCAL_API_KEY}
+
+tracing:
+  enabled: true
+  dir: ~/.tomo/traces
 
 # Reads and network run; writes and code execution ask first.
 # A per-tool rule wins over the class default.

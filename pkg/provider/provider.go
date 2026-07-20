@@ -82,16 +82,26 @@ type Request struct {
 	Tools    []Tool
 }
 
-// Usage counts tokens for one call. InputTokens is the whole prompt, cached
-// tokens included, so it stays comparable across calls and dialects. CachedInputTokens
-// is the subset of that prompt the provider served from its prefix cache, a read
-// billed at a fraction of the fresh rate; it is a subset of InputTokens, not an
-// addition to it, so a caller that prices a call subtracts it out to get the fresh
-// count. Zero means the provider reported no cache read (or does not report one).
+// Usage preserves the provider's complete token accounting for one call.
+// InputTokens is the whole prompt, including cache reads and writes. The cache
+// fields are subsets of InputTokens. ReasoningTokens is a subset of
+// OutputTokens. TotalTokens is the provider-reported total when available and
+// otherwise InputTokens plus OutputTokens.
 type Usage struct {
-	InputTokens       int `json:"input_tokens"`
-	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
-	OutputTokens      int `json:"output_tokens"`
+	InputTokens           int `json:"input_tokens"`
+	CachedInputTokens     int `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens int `json:"cache_write_input_tokens,omitempty"`
+	OutputTokens          int `json:"output_tokens"`
+	ReasoningTokens       int `json:"reasoning_tokens,omitempty"`
+	TotalTokens           int `json:"total_tokens"`
+}
+
+// Normalize fills a missing total while preserving an explicit provider total.
+func (u Usage) Normalize() Usage {
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.InputTokens + u.OutputTokens
+	}
+	return u
 }
 
 // Stop reasons, normalized across dialects.
@@ -104,6 +114,7 @@ const (
 // Response is the fully assembled reply to one call.
 type Response struct {
 	Blocks     []Block
+	Reasoning  string
 	StopReason string
 	Usage      Usage
 }

@@ -34,6 +34,68 @@ providers:
 	if cfg.DataDir == "" {
 		t.Error("data_dir default missing")
 	}
+	if !cfg.TraceEnabled() || cfg.Tracing.Dir != filepath.Join(cfg.DataDir, "traces") {
+		t.Errorf("tracing defaults = %+v", cfg.Tracing)
+	}
+}
+
+func TestTracingCanBeDisabled(t *testing.T) {
+	cfg, err := Load(write(t, `
+default_model: local/model
+providers:
+  local:
+    type: openai
+    base_url: http://localhost:11434/v1
+tracing:
+  enabled: false
+  dir: /tmp/tomo-test-traces
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TraceEnabled() {
+		t.Fatal("tracing enabled after explicit false")
+	}
+	if cfg.Tracing.Dir != "/tmp/tomo-test-traces" {
+		t.Fatalf("trace dir = %q", cfg.Tracing.Dir)
+	}
+}
+
+func TestProviderPricingPreservesExplicitFreeAndPaidRates(t *testing.T) {
+	cfg, err := Load(write(t, `
+providers:
+  paid:
+    type: openai
+    base_url: https://example.test/v1
+    pricing:
+      input: 2.5
+      cached_input: 0.25
+      cache_write: 3.125
+      output: 15
+    model_pricing:
+      small:
+        input: 0.25
+        cached_input: 0.025
+        output: 1.5
+  free:
+    type: openai
+    base_url: http://localhost:11434/v1
+    pricing: {}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paid := cfg.Providers["paid"].Pricing
+	if paid == nil || paid.Input != 2.5 || paid.CachedInput != 0.25 || paid.CacheWrite != 3.125 || paid.Output != 15 {
+		t.Fatalf("paid pricing = %+v", paid)
+	}
+	if small := cfg.Providers["paid"].ModelPricing["small"]; small.Input != 0.25 || small.CachedInput != 0.025 || small.Output != 1.5 {
+		t.Fatalf("small model pricing = %+v", small)
+	}
+	free := cfg.Providers["free"].Pricing
+	if free == nil || free.Input != 0 || free.Output != 0 {
+		t.Fatalf("free pricing = %+v", free)
+	}
 }
 
 func TestLoadMissingFileNamesTheFix(t *testing.T) {
