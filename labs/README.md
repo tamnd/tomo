@@ -13,3 +13,4 @@ go test ./labs/...
 ## Review series
 
 - [`review/r0`](review/r0/) covers trust-boundary invariants from the OpenCode review.
+- [`review/r1`](review/r1/) covers provider startup and explicit first contact.
