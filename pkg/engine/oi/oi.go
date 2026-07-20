@@ -115,9 +115,13 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 		if err != nil {
 			return turn, err
 		}
-		turn = append(turn, provider.Message{Role: provider.RoleAssistant, Blocks: resp.Blocks})
+		// A model may answer the code-as-action prompt with a structured tool call
+		// instead of a fence; normalize those into fenced text so the assistant turn
+		// stays text-only and the command still runs. See normalizeToolBlocks.
+		respBlocks := normalizeToolBlocks(resp.Blocks)
+		turn = append(turn, provider.Message{Role: provider.RoleAssistant, Blocks: respBlocks})
 
-		parsed := dia.Parse(assistantText(resp.Blocks))
+		parsed := dia.Parse(assistantText(respBlocks))
 		blocks := runnableBlocks(parsed)
 		if len(blocks) == 0 {
 			// A reply cut off at the token ceiling may have been mid-code: nudge it to
