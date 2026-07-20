@@ -90,6 +90,9 @@ func blockSig(b block) string {
 // distinct files a turn has touched.
 func dirtyPaths(porcelain string) map[string]bool {
 	out := map[string]bool{}
+	if strings.HasPrefix(porcelain, workspaceFingerprintPrefix) {
+		return out
+	}
 	for _, line := range strings.Split(porcelain, "\n") {
 		if len(line) < 4 {
 			continue

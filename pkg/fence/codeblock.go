@@ -65,6 +65,16 @@ func parseBlocks(reply string) []Block {
 			body = body[:0]
 			continue
 		}
+		// A model occasionally appends a stray word after the closing run
+		// ("``` mbilu" or a short non-Latin fragment). The suffix is outside the
+		// program; treating the whole line as code turns a valid action into a
+		// syntax error. Handle glued reopeners
+		// above first, then accept a same-length close with a short suffix.
+		if closesFenceWithJunk(trimmed, fence) {
+			out = append(out, Block{Lang: strings.ToLower(lang), Code: strings.Join(body, "\n")})
+			inFence = false
+			continue
+		}
 		body = append(body, line)
 	}
 	if inFence {
@@ -153,4 +163,28 @@ func closesFence(trimmed, fence string) bool {
 		n++
 	}
 	return n >= len(fence) && strings.TrimSpace(trimmed[n:]) == ""
+}
+
+func closesFenceWithJunk(trimmed, fence string) bool {
+	if trimmed == "" || fence == "" {
+		return false
+	}
+	c := fence[0]
+	n := 0
+	for n < len(trimmed) && trimmed[n] == c {
+		n++
+	}
+	if n != len(fence) {
+		return false
+	}
+	suffix := strings.TrimSpace(trimmed[n:])
+	if suffix == "" || len(suffix) > 32 {
+		return false
+	}
+	for _, r := range suffix {
+		if r == rune(c) {
+			return false
+		}
+	}
+	return true
 }

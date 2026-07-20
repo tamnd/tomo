@@ -48,6 +48,15 @@ func TestParseBlocksUnclosedFenceStillYields(t *testing.T) {
 	}
 }
 
+func TestParseBlocksIgnoresWordAfterClosingFence(t *testing.T) {
+	for _, suffix := range []string{"mbilu", "ેણ"} {
+		blocks := parseBlocks("```python\nprint(1)\n``` " + suffix)
+		if len(blocks) != 1 || blocks[0].Lang != "python" || blocks[0].Code != "print(1)" {
+			t.Fatalf("suffix %q: blocks = %+v", suffix, blocks)
+		}
+	}
+}
+
 func TestParseBlocksIgnoresProseWithoutFence(t *testing.T) {
 	if got := parseBlocks("no code here, just talking"); len(got) != 0 {
 		t.Fatalf("blocks = %d, want 0", len(got))

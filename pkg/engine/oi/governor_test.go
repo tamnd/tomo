@@ -57,6 +57,8 @@ func TestLooksLikeVerify(t *testing.T) {
 		{"go test ./...", true},
 		{"npm run build", true},
 		{"cargo check", true},
+		{"python3 - <<'PY'\nfrom pathlib import Path\nPath('x').write_text('y')\nPY", false},
+		{"python3 - <<'PY'\nassert 2 + 2 == 4\nPY", true},
 		{"grep -rn foo .", false},
 		{"cat pkg/a.py", false},
 		{"ls missing_dir", false},
