@@ -166,7 +166,9 @@ func main() {
 			fatal(err)
 		}
 	}
-	os.Stdout.Write(payload)
+	if _, err := os.Stdout.Write(payload); err != nil {
+		fatal(err)
+	}
 }
 
 func discover(root string) ([]string, error) {
@@ -380,7 +382,7 @@ func parseResponse(path string) (*provider.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	out := &provider.Response{StopReason: provider.StopEndTurn}
 	var content, reasoning strings.Builder
 	type pendingCall struct {
@@ -502,7 +504,7 @@ func readJSONL(path string, visit func([]byte) error) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64<<10), 128<<20)
 	for scanner.Scan() {
@@ -573,9 +575,12 @@ func hashInputs(dir, rel string, manifest io.Writer) (int, int64, error) {
 		}
 		hash := sha256.New()
 		n, err := io.Copy(hash, file)
-		file.Close()
+		closeErr := file.Close()
 		if err != nil {
 			return 0, total, err
+		}
+		if closeErr != nil {
+			return 0, total, closeErr
 		}
 		total += n
 		fmt.Fprintf(manifest, "%s\t%d\t%s\n", filepath.Join(rel, name), n, hex.EncodeToString(hash.Sum(nil)))
