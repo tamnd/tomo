@@ -12,7 +12,7 @@
 
 ![tomo showing its command surface, then writing a starter config with onboard and starting the daemon with the local web chat](docs/static/demo.gif)
 
-Most agent tools ask you to hand over your history, your files, and your provider key to somebody else's server. tomo doesn't. It runs where you run it, keeps its state in a sqlite file and a folder of plain markdown next to it, and the only thing that leaves your machine is the model call you would have made anyway. Every action it takes passes a fail-closed policy gate first, and the moment a turn pulls in content from outside (a fetched page, a tool's output), the session is tainted, so an injected instruction in that content can't quietly reach your shell.
+Most agent tools ask you to hand over your history, your files, and your provider key to somebody else's server. tomo runs where you run it and keeps its state in a sqlite file and a folder of plain markdown next to it. The configured model provider receives the model call, including the system prompt, user messages, enabled memory and skill indexes, tool schemas, and any file or tool result added to the conversation. The [provider data boundary](docs/content/guides/provider-data-boundary.md) documents the exact payload. Every action tomo takes passes a fail-closed policy gate first, and the moment a turn pulls in content from outside, the session is tainted, so an injected instruction in that content cannot quietly reach your shell.
 
 ## Install
 

@@ -14,7 +14,7 @@ It is a single Go binary you run yourself, and it puts a language model behind t
 tomo runs on your machine.
 Your provider key lives in your environment, your conversation history lives in a sqlite ledger under `~/.tomo`, and your memory is plain markdown in the same place.
 None of it passes through a tomo service, because there is no tomo service.
-The only thing that ever leaves the box is the model call itself, the same request you would have made talking to the provider directly.
+The configured provider receives the model call itself. That request contains the system prompt, user messages, enabled memory and skill indexes, tool definitions, and any file or tool result already placed in the conversation. The [provider data boundary](/guides/provider-data-boundary/) lists the exact fields and explains what remains local.
 
 That single fact changes the trust question.
 You are not asking whether to trust a company with your data; you are running the agent next to your data and deciding, per call, what it may touch.

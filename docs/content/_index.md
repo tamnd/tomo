@@ -10,7 +10,7 @@ heroPrimaryText: "Get started"
 Most agent products run in someone else's cloud, hold your keys, and log your conversations.
 tomo (友, "companion") takes the opposite stance.
 It is a single Go binary you run yourself.
-Your provider key, your chat history, and your memory all stay on your machine, and the only thing that leaves is the model call you would have made anyway.
+Your provider key and persisted state stay on your machine. The configured model provider receives each [documented model-call payload](/guides/provider-data-boundary/), including conversation content and any tool result placed in model context.
 
 Point it at any provider, text it from a chat app, and it can do real work:
 
