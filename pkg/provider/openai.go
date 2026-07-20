@@ -287,12 +287,16 @@ type oaChunk struct {
 	Usage *struct {
 		PromptTokens        int `json:"prompt_tokens"`
 		CompletionTokens    int `json:"completion_tokens"`
+		TotalTokens         int `json:"total_tokens"`
 		PromptTokensDetails *struct {
 			// CachedTokens is the part of prompt_tokens the server matched against its
 			// prefix cache and billed at the cache-read rate. It is a subset of
 			// prompt_tokens, not an addition to it.
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`
+		CompletionTokensDetails *struct {
+			ReasoningTokens int `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
 	} `json:"usage"`
 	// Error carries an upstream failure delivered mid-stream. A gateway that
 	// drops a completion sends a data line like
@@ -327,8 +331,12 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 		if ch.Usage != nil {
 			out.Usage.InputTokens = ch.Usage.PromptTokens
 			out.Usage.OutputTokens = ch.Usage.CompletionTokens
+			out.Usage.TotalTokens = ch.Usage.TotalTokens
 			if d := ch.Usage.PromptTokensDetails; d != nil {
 				out.Usage.CachedInputTokens = d.CachedTokens
+			}
+			if d := ch.Usage.CompletionTokensDetails; d != nil {
+				out.Usage.ReasoningTokens = d.ReasoningTokens
 			}
 		}
 		if len(ch.Choices) == 0 {
@@ -392,6 +400,9 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 		// answer is in content or in tool_calls, are unaffected.
 		out.Blocks = append(out.Blocks, Text(reason.String()))
 	}
+	if text.Len() > 0 || len(calls) > 0 {
+		out.Reasoning = reason.String()
+	}
 	idxs := make([]int, 0, len(calls))
 	for i := range calls {
 		idxs = append(idxs, i)
@@ -414,5 +425,6 @@ func parseOpenAIStream(r io.Reader, emit func(Event)) (*Response, error) {
 	if len(calls) > 0 {
 		out.StopReason = StopToolUse
 	}
+	out.Usage = out.Usage.Normalize()
 	return out, nil
 }

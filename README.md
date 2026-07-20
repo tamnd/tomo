@@ -100,6 +100,12 @@ chat message ─▶ channel adapter ─▶ gateway daemon ─▶ policy gate ─
 
 A gateway daemon owns sessions in a sqlite ledger. Channel adapters are thin: they turn a platform's messages into events and render replies back, nothing more. Tools are typed and classified (read, net, write, exec), and a policy engine decides allow, ask, or deny on every call, with approvals answered right in the channel you're talking on. Memory is plain markdown you can read and edit yourself, no vector store to inspect.
 
+Model calls go into a separate normalized trace ledger. Repeated system prompts, tool definitions, messages, and responses are stored once by content hash, while runs remain directly queryable by date, provider, model, and task. SQLite WAL mode and short write transactions let independent tomo sessions share the ledger safely. Every reported input, cache-read, cache-write, output, reasoning, and total token count is retained. Optional per-provider list rates snapshot exact cost components at call time. `tomo traces summary`, `tomo traces list`, and `tomo traces export` provide aggregate, filtered, and fully resolved views without keeping repeated wire payloads.
+
+`tomo traces export RUN_ID` writes [Hugging Face Session Trace Simple Format](https://huggingface.co/docs/hub/en/session-traces-format) JSONL by default, ready to upload to a dataset or Storage Bucket and inspect in the agent trace viewer. Use `--format native` for tomo's lossless resolved JSON document. Review private prompts, source code, paths, and outputs before publishing a trace dataset.
+
+`tomo traces export-all DATASET_DIR` materializes filtered sessions under a date, provider, model, task, and run hierarchy for a single dataset upload. The normalized ledger remains the compact source of truth until that explicit export.
+
 ## Building from source
 
 ```sh
@@ -122,6 +128,7 @@ pkg/memory/  the markdown memory store and its curator
 pkg/schedule/ cron-style scheduled prompts and the heartbeat
 pkg/mcp/     MCP client (attach servers) and MCP server (serve tomo's tools)
 pkg/provider/ model providers: Anthropic native, OpenAI-compatible via base_url
+pkg/trace/    normalized, deduplicated model-call capture and query tools
 pkg/wire/    stdlib-only translators between chat-completions and other LLM
              wires (Anthropic Messages, OpenAI Responses, Gemini)
 pkg/sandbox/ the optional OS-level exec sandbox

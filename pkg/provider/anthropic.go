@@ -263,6 +263,7 @@ func parseAnthropicStream(r io.Reader, emit func(Event)) (*Response, error) {
 			u := ev.Message.Usage
 			out.Usage.InputTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 			out.Usage.CachedInputTokens = u.CacheReadInputTokens
+			out.Usage.CacheWriteInputTokens = u.CacheCreationInputTokens
 		case "content_block_start":
 			for len(blocks) <= ev.Index {
 				blocks = append(blocks, Block{})
@@ -321,6 +322,7 @@ func parseAnthropicStream(r io.Reader, emit func(Event)) (*Response, error) {
 			out.Blocks = append(out.Blocks, b)
 		}
 	}
+	out.Usage = out.Usage.Normalize()
 	return out, nil
 }
 

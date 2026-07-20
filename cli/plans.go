@@ -223,7 +223,7 @@ func buildPlanner(cfg *config.Config, model string) (*orch.Planner, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := provider.Build(pc)
+	p, err := buildProvider(cfg, name, pc)
 	if err != nil {
 		return nil, fmt.Errorf("provider %s: %w", name, err)
 	}

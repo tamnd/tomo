@@ -93,7 +93,7 @@ func TestAnthropicStream(t *testing.T) {
 	}
 	// InputTokens is the whole prompt: fresh 42 plus cache read 100 plus cache
 	// creation 8. CachedInputTokens is the read subset.
-	if resp.Usage.InputTokens != 150 || resp.Usage.OutputTokens != 17 || resp.Usage.CachedInputTokens != 100 {
+	if resp.Usage.InputTokens != 150 || resp.Usage.OutputTokens != 17 || resp.Usage.CachedInputTokens != 100 || resp.Usage.CacheWriteInputTokens != 8 || resp.Usage.TotalTokens != 167 {
 		t.Errorf("usage = %+v", resp.Usage)
 	}
 	if len(resp.Blocks) != 2 {

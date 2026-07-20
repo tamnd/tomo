@@ -19,12 +19,35 @@ providers:
   anthropic:
     type: anthropic
     api_key: ${ANTHROPIC_API_KEY}
+    # Optional list-rate snapshot in USD per one million tokens. Keep this
+    # current for exact cost reports. An explicit all-zero block marks a free
+    # or local model. Omit pricing when the rate is unknown.
+    # pricing:
+    #   input: 0
+    #   cached_input: 0
+    #   cache_write: 0
+    #   output: 0
+    # Per-model rates override the provider default:
+    # model_pricing:
+    #   another-model:
+    #     input: 0
+    #     cached_input: 0
+    #     cache_write: 0
+    #     output: 0
 
   # Anything speaking the OpenAI chat completions dialect works too:
   # local:
   #   type: openai
   #   base_url: http://gamingpc:8000/v1
   #   api_key: ${LOCAL_API_KEY}
+
+# Every model call is recorded in a normalized local ledger. Repeated system
+# prompts, tool schemas, messages, and responses are stored once by content
+# hash, while runs are indexed by date, provider, model, and task. Set enabled
+# to false when a deployment must retain no model content.
+tracing:
+  enabled: true
+  # dir: ~/.tomo/traces
 
 # Every tool call passes this gate. Class defaults shown are the built-in
 # safe posture: reads and network run, writes and code execution ask first.
