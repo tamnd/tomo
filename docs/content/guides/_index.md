@@ -16,6 +16,7 @@ They assume you have worked through the [quick start](/getting-started/quick-sta
 - [Voice](/guides/voice/) runs speech both ways on your machine with whisper and piper, so no audio leaves the box.
 - [MCP](/guides/mcp/) works in two directions: attaching MCP servers so their tools join tomo's, and serving tomo's own tools to other clients with `tomo mcp`.
 - [Configuration](/guides/configuration/) is a tour of `~/.tomo/config.yaml`, from providers and the agent knobs to the data directory.
+- [Provider data boundary](/guides/provider-data-boundary/) lists exactly what each model request sends and what remains local.
 - [Policy and safety](/guides/policy-and-safety/) is the whole trust model: the gate every tool call passes, capability classes, taint, and what tomo will never do by default.
 
 Read [policy and safety](/guides/policy-and-safety/) first if you care about what runs, what asks, and what taint does.
