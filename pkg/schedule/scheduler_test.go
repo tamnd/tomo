@@ -79,12 +79,15 @@ func TestNotDueJobIsSkipped(t *testing.T) {
 	var ran int
 	run := func(context.Context, string, string, string) (string, error) { ran++; return "x", nil }
 	st := openStore(t)
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
 
 	id, _ := st.AddJob("0 0 * * *", "daily thing", "web", "c1")
 	// Ran an hour ago; the next midnight is far off, so nothing is due.
-	_ = st.MarkRun(id, time.Now().Add(-time.Hour))
+	_ = st.MarkRun(id, now.Add(-time.Hour))
 
-	New(st, run, nil).checkDue(context.Background())
+	s := New(st, run, nil)
+	s.now = func() time.Time { return now }
+	s.checkDue(context.Background())
 	if ran != 0 {
 		t.Errorf("job ran %d times, want 0", ran)
 	}
