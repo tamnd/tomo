@@ -224,6 +224,13 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 			Workspace: parts.workspace,
 			LSP:       strings.Fields(os.Getenv("TOMO_LSP")),
 		}
+		// A strong model can keep refactoring past a clean stopping point, so the
+		// oi loop never converges and the captured patch is a mid-edit snapshot.
+		// TOMO_MAX_ROUNDS bounds the loop at a round boundary (where the model's
+		// last executed code was py_compile-clean). Zero keeps it unbounded.
+		if v, err := strconv.Atoi(os.Getenv("TOMO_MAX_ROUNDS")); err == nil {
+			e.MaxRounds = v
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
