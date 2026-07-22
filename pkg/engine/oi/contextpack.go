@@ -114,6 +114,16 @@ func ContextPackWith(workspace, taskText string, lspArgv []string) string {
 	var defs []symbolDef
 	if len(lspArgv) > 0 {
 		defs = resolveSymbolsLSP(workspace, symbols, lspArgv)
+		// A verification signal: with a server configured, say on stderr whether it
+		// actually resolved anything or whether we are about to fall back to regex.
+		// The run trace captures this, so an A/B can prove the LSP path was live and
+		// not a silent no-op. Only emitted when a server was asked for, so the
+		// default (regex) path stays quiet.
+		if len(defs) > 0 {
+			fmt.Fprintf(os.Stderr, "oi: context pack via LSP (%s): resolved %d/%d symbols\n", lspArgv[0], len(defs), len(symbols))
+		} else {
+			fmt.Fprintf(os.Stderr, "oi: context pack LSP (%s) resolved 0/%d symbols, falling back to regex\n", lspArgv[0], len(symbols))
+		}
 	}
 	if len(defs) == 0 {
 		defs = resolveSymbols(workspace, symbols)
