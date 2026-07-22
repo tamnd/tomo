@@ -61,6 +61,13 @@ const maxContinues = 3
 
 const continueNudge = "Your previous reply was cut off at the length limit. Continue, and if you meant to run code, finish the code block so it can execute."
 
+// maxEditNudges bounds how many times the no-edit finish guard pushes a model
+// back to work when it tries to end a coding turn with a clean worktree. The
+// first firing is the plain nudge; a second means the model gave up again, and
+// gets the firmer offline-aware persistNudge. The cap keeps a genuinely stuck run
+// from being nudged forever.
+const maxEditNudges = 2
+
 // Turn runs one user turn to completion and returns every message it generated,
 // the user message first, so the caller can persist them. On error the messages
 // so far come back too. The stop condition is Open Interpreter's: the turn ends
@@ -77,8 +84,10 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	system := e.System + dia.Hint
 	// The no-edit finish guard state: ran records that the model executed at least
 	// one block this turn, so the guard weighs in only on a turn that was actually
-	// coding, not a plain answer; editNudged keeps the nudge to a single firing.
-	ran, editNudged := false, false
+	// coding, not a plain answer; editNudges counts firings and caps them at
+	// maxEditNudges, so a model that gives up on a clean tree is pushed back to
+	// work more than once but a stuck run still terminates.
+	ran, editNudges := false, 0
 	// The convergence governor state (governor.go), the code-as-action counterpart
 	// of cx's four signals. seen tracks block signatures for the stall signal;
 	// sinceEdit/writes/files count rounds and worktree changes for the no-edit,
@@ -144,19 +153,29 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			}
 			// No-edit finish guard: the model wants to end with a clean worktree, so
 			// nothing was written this turn. Two shapes trigger it, both on a git
-			// worktree and both at most once, so a model that legitimately finished or
-			// only answered a question pays nothing. First, the model ran code and
-			// quit without applying a fix. Second, it ran no code at all yet its reply
-			// claims it edited or tested, which is a weak model hallucinating its tool
-			// use in prose; that gets a sharper nudge that narration does not act.
-			if !editNudged {
+			// worktree, so a model that legitimately finished or only answered a
+			// question pays nothing. First, the model ran code and quit without
+			// applying a fix. Second, it ran no code at all yet its reply claims it
+			// edited or tested, which is a weak model hallucinating its tool use in
+			// prose; that gets a sharper nudge that narration does not act. The guard
+			// fires up to maxEditNudges times: a model that reaches it again after the
+			// first nudge has usually decided the task is impossible offline, and the
+			// firmer persistNudge tells it the environment is offline by design and to
+			// write the fix from the spec it already has. The cap keeps a truly stuck
+			// run from looping forever.
+			if editNudges < maxEditNudges {
 				claimed := looksLikeActing(assistantText(resp.Blocks))
 				if ran || claimed {
 					if state, ok := e.worktreeState(ctx); ok && state == "" {
-						editNudged = true
-						nudge := noEditNudge
-						if !ran && claimed {
+						editNudges++
+						var nudge string
+						switch {
+						case !ran && claimed:
 							nudge = hallucinatedNudge
+						case editNudges == 1:
+							nudge = noEditNudge
+						default:
+							nudge = persistNudge
 						}
 						turn = append(turn, provider.UserText(nudge))
 						continue

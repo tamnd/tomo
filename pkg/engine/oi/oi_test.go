@@ -282,19 +282,42 @@ func TestFinishGuardNudgesUntilEdited(t *testing.T) {
 
 // The guard fires at most once: a model that keeps ending clean after the nudge is
 // let go rather than nudged forever, so it cannot spin.
-func TestFinishGuardFiresOnce(t *testing.T) {
+// The no-edit finish guard fires up to twice before it lets a coding turn end on
+// a clean worktree: the first firing is the plain nudge, the second is the firmer
+// offline-aware persistNudge for a model that gave up again, and a model that
+// still ends clean after both is allowed to stop rather than be nudged forever.
+func TestFinishGuardFiresTwiceThenStops(t *testing.T) {
 	sp := &scriptProvider{responses: []*provider.Response{
-		reply("```sh\ncat file\n```"),     // explore
-		reply("I think it is fine."),      // ends clean -> nudge
-		reply("Still nothing to change."), // ends clean again -> already nudged -> end
+		reply("```sh\ncat file\n```"),          // explore
+		reply("I think it is fine."),           // ends clean -> noEditNudge
+		reply("I cannot fetch the reference."), // ends clean -> persistNudge
+		reply("Still nothing to change."),      // ends clean again -> both spent -> end
 	}}
 	box := &gitBox{}
 	e := &Engine{Provider: sp, Model: "test", Box: box}
-	if _, err := e.Turn(context.Background(), nil, provider.UserText("fix"), &recordSink{}); err != nil {
+	msgs, err := e.Turn(context.Background(), nil, provider.UserText("fix"), &recordSink{})
+	if err != nil {
 		t.Fatalf("Turn: %v", err)
 	}
 	if len(sp.responses) != 0 {
 		t.Fatalf("guard did not stop: %d scripted replies unused", len(sp.responses))
+	}
+	var noEdit, persist int
+	for _, m := range msgs {
+		for _, b := range m.Blocks {
+			if b.Type != provider.BlockText {
+				continue
+			}
+			if strings.Contains(b.Text, "you have not changed any file yet") {
+				noEdit++
+			}
+			if strings.Contains(b.Text, "run out of things to look up") {
+				persist++
+			}
+		}
+	}
+	if noEdit != 1 || persist != 1 {
+		t.Fatalf("want one noEditNudge then one persistNudge, got noEdit=%d persist=%d", noEdit, persist)
 	}
 }
 

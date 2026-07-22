@@ -41,6 +41,21 @@ const noEditNudge = "You are ending the turn, but you have not changed any file 
 const hallucinatedNudge = "No code block ran this turn, so nothing you described actually happened: no file was read, edited, or tested, and the working tree is unchanged. " +
 	"If a command seemed to produce no output, that is because it never ran. In this session the only thing that acts is a fenced ```python or ```shell block that actually executes. Stop narrating the work as if it were done and emit the real block."
 
+// persistNudge is the second, firmer firing of the no-edit finish guard, for a
+// model that took the first nudge and still tries to end a coding turn with a
+// clean worktree. The usual reason a model reaches here twice is that it decided
+// the task was impossible without a resource it could not reach: it tried to
+// fetch the reference change, clone upstream, or read history the checkout does
+// not carry, was refused, and read that refusal as a wall. This nudge names that
+// excuse and removes it: the offline environment is by design, the specification
+// and the checked-out code are sufficient, and stopping with an empty tree is the
+// one wrong move left. It is the finish-guard counterpart of the offline
+// paragraph in the system prompt, applied at the moment the model gives up.
+const persistNudge = "You have run out of things to look up, but the fix is still not written. " +
+	"You cannot fetch a reference commit, clone upstream, or install anything here, and the checkout carries no history beyond its current commit: that is by design, not a failure, and not a reason to stop. " +
+	"The task description and the code already in the working tree are everything you need. " +
+	"Do not end the turn empty. Write the change now from the specification in front of you, in a runnable block, then run the smallest test that exercises it."
+
 // looksLikeActing reports whether an assistant reply reads like the model was
 // acting on the code, or claiming to, rather than merely answering a question. It
 // is the signal that separates a model that hallucinated its tool use (talks like
