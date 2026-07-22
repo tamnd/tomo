@@ -94,6 +94,21 @@ var hashToolCallDialect = Dialect{
 	Hint:  "\n\nEmit each action as a single Markdown code fence and nothing else: ```shell or ```python on the opening line, the code, then a closing ```. Do not wrap the code in <tool_call> tags or CDATA. To finish, reply with plain prose and no code fence.",
 }
 
+// deepseekDialect is the Markdown parser with a hint that names the shape and
+// forbids the one this model drifts into. deepseek-v4-flash writes a clean
+// ```sh/```python fence in a single-turn probe, but over a real multi-turn run it
+// intermittently reaches for invented XML tags instead, <read><file>...</file>
+// </read> to read a file or <shall>...</shall> to run a command, and emits
+// nothing else that turn. The engine has no read tool and no <shall> tag, so the
+// action is dropped and the turn ends on nothing done. The hint steers it back to
+// the fence the base prompt already asks for and calls out the two tags by name;
+// ParseMarkdown's salvage still catches them on the turns the hint does not hold.
+var deepseekDialect = Dialect{
+	Name:  "deepseek",
+	Parse: ParseMarkdown,
+	Hint:  "\n\nEmit each action as a single Markdown code fence and nothing else: ```sh or ```python on the opening line, the code, then a closing ```. Do not use XML-style tags such as <read>, <file>, <shall>, or <edit>: read a file with `cat path` in a ```sh block, and edit one with a ```python block. To finish, reply with plain prose and no code fence.",
+}
+
 // For picks the dialect for a model by family, matching on the bare model
 // id (any provider/ prefix stripped). An unknown model gets Markdown, the safe
 // default: a model that writes fences is parsed correctly, and one that does not
@@ -107,6 +122,8 @@ func For(model string) Dialect {
 	switch {
 	case strings.Contains(id, "north-mini"):
 		return toolJSONDialect
+	case strings.Contains(id, "deepseek"):
+		return deepseekDialect
 	// The qwen family, served over ollama's OpenAI endpoint under the zero-tool
 	// code-as-action engine, writes a plain Markdown fence. Its native XML tool
 	// call only appears when a tool schema is passed, which this engine never
@@ -305,12 +322,24 @@ var (
 	hashFenceOpenRe  = regexp.MustCompile("^`{3,}[ \t]*([a-zA-Z0-9]*)[ \t]*$")
 	hashFenceCloseRe = regexp.MustCompile("^`{3,}[ \t]*$")
 
+	// deepseek-v4-flash-free's invented tags: a shell command in <shall>...</shall>
+	// and a file read in <read>...</read> (usually wrapping <file>PATH</file>).
+	shallRe    = regexp.MustCompile(`(?s)<shall>(.*?)</shall>`)
+	readTagRe  = regexp.MustCompile(`(?s)<read>(.*?)</read>`)
+	readFileRe = regexp.MustCompile(`(?s)<file>(.*?)</file>`)
+
 	xmlToolCallRe = regexp.MustCompile(`(?s)<tool_call>(.*?)</tool_call>`)
 	xmlCodeRe     = regexp.MustCompile(`(?s)<code>(.*?)</code>`)
 	xmlLangRe     = regexp.MustCompile(`(?s)<language>(.*?)</language>`)
 	htmlPreCodeRe = regexp.MustCompile(`(?s)<pre>\s*<code[^>]*>(.*?)</code>\s*</pre>`)
 	langTagRe     = regexp.MustCompile(`(?s)<(shell|sh|bash|zsh|python|py|python3)>(.*?)</(shell|sh|bash|zsh|python|py|python3)>`)
 )
+
+// shellQuote wraps a path in single quotes so a space or shell metacharacter in
+// it survives as one argument, closing any embedded single quote the POSIX way.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // bareLangLine reports whether a code body opens with a lone language word on its
 // own line ("shell\n<code>"), the way an HTML <pre><code> block carries the tag a
@@ -395,6 +424,34 @@ func parseExecuteXML(reply string) []Block {
 			continue
 		}
 		out = append(out, Block{Lang: strings.ToLower(lt[1]), Code: code})
+	}
+	// deepseek-v4-flash-free's invented mini-tool tags. On the turns it ignores the
+	// hint it wraps a command in <shall>...</shall> or asks to read a file with
+	// <read><file>PATH</file></read>, and stops, so the dropped action ends the turn
+	// on nothing. The engine has one primitive, so each is translated to the shell
+	// command that does the same thing: <shall> is the command verbatim, <read> is a
+	// `cat` of the named file. Anchored on the matched open/close tag so a stray
+	// mention in prose does not trigger, and only reached as the no-fence fallback,
+	// so a model that writes a real fence is untouched. A <read> with no <file> falls
+	// back to catting its inner text as the path.
+	for _, sh := range shallRe.FindAllStringSubmatch(reply, -1) {
+		code := strings.Trim(sh[1], "\n")
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		out = append(out, Block{Lang: "shell", Code: code})
+	}
+	for _, rd := range readTagRe.FindAllStringSubmatch(reply, -1) {
+		path := ""
+		if fm := readFileRe.FindStringSubmatch(rd[1]); fm != nil {
+			path = strings.TrimSpace(fm[1])
+		} else {
+			path = strings.TrimSpace(rd[1])
+		}
+		if path == "" {
+			continue
+		}
+		out = append(out, Block{Lang: "shell", Code: "cat -- " + shellQuote(path)})
 	}
 	// The Hermes <function=NAME><parameter=...> shape from a model on the default
 	// Markdown dialect. mimo-v2.5-free reaches for <function=code_interpreter>

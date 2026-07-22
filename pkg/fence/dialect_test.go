@@ -1,6 +1,9 @@
 package fence
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The dialect must be chosen by model family, with Markdown the default for an
 // unknown model.
@@ -16,13 +19,58 @@ func TestDialectForByFamily(t *testing.T) {
 		{"local/qwen3:8b", "markdown"},
 		{"qwen3.5-plus", "markdown"},
 		{"opencode/hy3-free", "hashtoolcall"},
-		{"deepseek-v4-flash-free", "markdown"},
+		{"deepseek-v4-flash-free", "deepseek"},
+		{"opencode/deepseek-v4-flash", "deepseek"},
 		{"something-unknown", "markdown"},
 	} {
 		if got := For(c.model).Name; got != c.want {
 			t.Errorf("For(%q) = %q, want %q", c.model, got, c.want)
 		}
 	}
+}
+
+// The deepseek dialect carries a hint that names the fence and the tags to avoid,
+// so a drifting model is steered back to the shape the parser reads.
+func TestDeepseekDialectHint(t *testing.T) {
+	h := For("deepseek-v4-flash-free").Hint
+	if h == "" {
+		t.Fatal("deepseek dialect has no hint")
+	}
+	for _, want := range []string{"```sh", "<read>", "<shall>"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("deepseek hint missing %q", want)
+		}
+	}
+}
+
+// On the turns the hint does not hold, the Markdown salvage must recover the
+// action out of deepseek-v4-flash-free's invented tags rather than drop it: a
+// <shall> body runs as a shell command, and a <read><file> becomes a cat.
+func TestSalvageDeepseekInventedTags(t *testing.T) {
+	t.Run("shall is a shell command", func(t *testing.T) {
+		b := ParseMarkdown("I'll check the tree.\n<shall>\nls -la /testbed\n</shall>")
+		if len(b) != 1 || b[0].Lang != "shell" || strings.TrimSpace(b[0].Code) != "ls -la /testbed" {
+			t.Fatalf("got %+v", b)
+		}
+	})
+	t.Run("read of a file becomes a cat", func(t *testing.T) {
+		b := ParseMarkdown("Let me look.\n<read><file>dynaconf/utils/__init__.py</file></read>")
+		if len(b) != 1 || b[0].Lang != "shell" || b[0].Code != "cat -- 'dynaconf/utils/__init__.py'" {
+			t.Fatalf("got %+v", b)
+		}
+	})
+	t.Run("a real fence still wins over salvage", func(t *testing.T) {
+		b := ParseMarkdown("```sh\necho hi\n```\n<shall>rm -rf /</shall>")
+		if len(b) != 1 || strings.TrimSpace(b[0].Code) != "echo hi" {
+			t.Fatalf("fence must win, got %+v", b)
+		}
+	})
+	t.Run("a path with a space stays one argument", func(t *testing.T) {
+		b := ParseMarkdown("<read><file>my dir/a.py</file></read>")
+		if len(b) != 1 || b[0].Code != "cat -- 'my dir/a.py'" {
+			t.Fatalf("got %+v", b)
+		}
+	})
 }
 
 // The tool-JSON dialect must lift the code out of north-mini-code-free's real
