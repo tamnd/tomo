@@ -187,7 +187,8 @@ func TestVerifyToGreenSkipsUneditedTurn(t *testing.T) {
 	sp := &scriptProvider{responses: []*provider.Response{
 		reply("```sh\npytest -q\n```"),                 // red, but nothing was edited
 		reply("The suite is already broken upstream."), // ends clean -> no-edit nudge
-		reply("Nothing to change here."),               // already nudged -> end
+		reply("I cannot fetch the reference."),         // ends clean -> persist nudge
+		reply("Nothing to change here."),               // both nudges spent -> end
 	}}
 	box := &verifyGitBox{}
 	e := &Engine{Provider: sp, Model: "test", Box: box}
