@@ -45,6 +45,11 @@ type Engine struct {
 	// Workspace is only carried for the audit trail and the sink; the sandbox
 	// already roots execution there.
 	Workspace string
+	// LSP is an optional language-server command (argv) used to resolve the
+	// context pack's symbols to their exact definitions and true references. Empty
+	// means the dependency-free regex resolver is used. Any server failure falls
+	// back to regex, so setting this never makes a run worse.
+	LSP []string
 	// MaxRounds caps the model calls in one turn. Zero is unbounded. A positive
 	// value bounds a probe or an A/B run, and stands in for OI's budget break.
 	MaxRounds int
@@ -75,6 +80,15 @@ const maxEditNudges = 2
 // signals it is done.
 func (e *Engine) Turn(ctx context.Context, history []provider.Message, user provider.Message, sink agent.Sink) ([]provider.Message, error) {
 	turn := []provider.Message{user}
+	// Symbol-anchored context pack (contextpack.go): deterministic retrieval that
+	// runs once before the loop, lifting the identifiers the task names to their
+	// full definitions in the workspace so the model's first edit is made against
+	// the whole contract rather than a slice it chose. Empty when there is no
+	// workspace, no resolvable symbol, or nothing to add, so a run that cannot use
+	// it pays nothing and the loop is unchanged.
+	if pack := e.contextPack(assistantText(user.Blocks)); pack != "" {
+		turn = append(turn, provider.UserText(pack))
+	}
 	continues := 0
 	round := 0
 	// The dialect is chosen from the model: how this model natively writes an

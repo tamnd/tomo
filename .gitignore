@@ -5,3 +5,4 @@ docs/public/
 docs/public-pages/
 docs/public-cf/
 .tago-src/
+.DS_Store
