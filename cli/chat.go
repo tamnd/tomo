@@ -222,6 +222,7 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 			Box:       parts.box,
 			Gate:      guard,
 			Workspace: parts.workspace,
+			LSP:       strings.Fields(os.Getenv("TOMO_LSP")),
 		}
 		return e, parts.label + " · oi", nil
 	}
