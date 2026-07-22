@@ -1,0 +1,17 @@
+{
+  "model": "deepseek-v4-flash-free",
+  "base_url": "https://opencode.ai/zen/v1",
+  "timestamp": "2026-07-22T16:52:23Z",
+  "arms": [
+    {
+      "arm": "regex-pack",
+      "trials": 1,
+      "fixed": 0,
+      "errored": 0,
+      "prompt_tokens": 309,
+      "output_tokens": 9330,
+      "cached_input_tokens": 256,
+      "preamble_bytes": 423
+    }
+  ]
+}
