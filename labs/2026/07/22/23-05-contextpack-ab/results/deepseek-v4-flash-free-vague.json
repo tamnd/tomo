@@ -1,0 +1,28 @@
+{
+  "model": "deepseek-v4-flash-free",
+  "task": "vague",
+  "base_url": "https://opencode.ai/zen/v1",
+  "timestamp": "2026-07-22T16:32:20Z",
+  "arms": [
+    {
+      "arm": "whole-repo",
+      "trials": 8,
+      "fixed": 4,
+      "errored": 0,
+      "prompt_tokens": 48168,
+      "output_tokens": 19202,
+      "cached_input_tokens": 42624,
+      "preamble_bytes": 24527
+    },
+    {
+      "arm": "pack",
+      "trials": 8,
+      "fixed": 4,
+      "errored": 0,
+      "prompt_tokens": 4040,
+      "output_tokens": 27298,
+      "cached_input_tokens": 2688,
+      "preamble_bytes": 1322
+    }
+  ]
+}
