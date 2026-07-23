@@ -237,6 +237,13 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		if os.Getenv("TOMO_OI_VERIFY") == "1" {
 			e.System = e.System + "\n\n" + oi.VerifyDirective
 		}
+		// TOMO_OI_GATE=1 arms the harness-side executing-check gate (spec 2109 S2):
+		// a turn that edited the tree cannot end on a check that only parsed the
+		// source. Stronger than the prompt directive, which the model can read and
+		// still stop on a syntax pass; this refuses the ending. A/B'd on its own knob.
+		if os.Getenv("TOMO_OI_GATE") == "1" {
+			e.ExecGate = true
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
