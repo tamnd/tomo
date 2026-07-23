@@ -53,6 +53,11 @@ type Engine struct {
 	// MaxRounds caps the model calls in one turn. Zero is unbounded. A positive
 	// value bounds a probe or an A/B run, and stands in for OI's budget break.
 	MaxRounds int
+	// ExecGate arms the executing-check gate (gate.go): a turn that edited the
+	// worktree cannot end unless its last check actually ran the changed code and
+	// came back green, not merely parsed or compiled it. Off by default so it can
+	// be A/B'd against the softer prompt directive.
+	ExecGate bool
 }
 
 // maxCallRetries is how many extra times a single model call is retried on a
@@ -115,6 +120,11 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	files, sprawlNudged := map[string]bool{}, false
 	edited, verifyFailed, verifyNudged := false, false, false
 	droppedNudged := false
+	// Executing-check gate state (gate.go, spec 2109 S2): lastCheckExec records
+	// whether the model's most recent verification block actually ran the changed
+	// code rather than only parsing it; anyCheck records that some check ran at all;
+	// execNudges caps the gate's firings. These matter only when ExecGate is armed.
+	lastCheckExec, anyCheck, execNudges := false, false, 0
 	// The worktree baseline is captured lazily, on the first round that actually
 	// runs code, so a pure answer turn that never executes a block pays no git
 	// probe. tracked says the workspace is a git worktree, the precondition for the
@@ -203,6 +213,16 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 				turn = append(turn, provider.UserText(verifyFailedNudge))
 				continue
 			}
+			// Executing-check gate (spec 2109 S2): the model edited the tree and wants
+			// to stop, but its verification never actually ran the change: no check at
+			// all, or a last check that only parsed or compiled the source. A green
+			// parse is not a green run, so refuse the ending and push the model to run
+			// the real thing, bounded by execCheckLimit so a stuck run still terminates.
+			if e.ExecGate && edited && !verifyFailed && (!anyCheck || !lastCheckExec) && execNudges < execCheckLimit {
+				execNudges++
+				turn = append(turn, provider.UserText(execCheckNudge))
+				continue
+			}
 			// No code to run and a change is in place: the model is done.
 			return turn, nil
 		}
@@ -228,10 +248,14 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			out, isErr := e.exec(ctx, b, sink)
 			results = append(results, provider.Text(label(i, len(blocks), out, isErr)))
 			// A verification block records whether the code is still red, so the finish
-			// guard can catch a turn ending on a failing check.
+			// guard can catch a turn ending on a failing check. It also records whether
+			// the check actually ran the changed code, which is what the executing-check
+			// gate holds the finish to.
 			if looksLikeVerify(b.Code) {
 				verifyFailed = isErr
 				roundVerified = i == len(blocks)-1
+				anyCheck = true
+				lastCheckExec = isExecutingCheck(b.Code)
 			}
 		}
 
@@ -269,8 +293,10 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 		// A response that both changed the tree and ended on a green verification
 		// has completed the edit/verify contract. Do not spend another model call
 		// merely asking it to paraphrase that success. Requiring the verification
-		// block to be last ensures no later action invalidated the check.
-		if roundWrote && roundVerified && !verifyFailed {
+		// block to be last ensures no later action invalidated the check. When the
+		// executing-check gate is armed, the green verification must also have run the
+		// code (not just parsed it), so a weak check does not shortcut the finish.
+		if roundWrote && roundVerified && !verifyFailed && (!e.ExecGate || lastCheckExec) {
 			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 			return turn, nil
 		}
