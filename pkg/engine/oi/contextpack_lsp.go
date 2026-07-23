@@ -58,6 +58,11 @@ func resolveSymbolsLSP(root string, symbols []string, argv []string) []symbolDef
 	}
 
 	found := map[string]*symbolDef{}
+	// primaries records, for each resolved named symbol, the open document and the
+	// symbol's range, so the expansion pass can scan its body for call sites and
+	// follow them to their definitions without re-reading the file.
+	var primaries []lspPrimary
+	opened := map[string]bool{}
 	files := 0
 	filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -103,6 +108,7 @@ func resolveSymbolsLSP(root string, symbols []string, argv []string) []symbolDef
 		if err := client.DidOpen(uri, languageID(ext), text); err != nil {
 			return nil
 		}
+		opened[uri] = true
 		syms, err := client.DocumentSymbol(uri)
 		if err != nil {
 			return nil
@@ -127,6 +133,7 @@ func resolveSymbolsLSP(root string, symbols []string, argv []string) []symbolDef
 			}
 			d.refs = lspRefs(client, root, uri, sym.SelectionRange.Start, rel)
 			found[s] = d
+			primaries = append(primaries, lspPrimary{name: s, uri: uri, rng: sym.Range, lines: lines})
 		}
 		return nil
 	})
@@ -140,7 +147,173 @@ func resolveSymbolsLSP(root string, symbols []string, argv []string) []symbolDef
 			}
 		}
 	}
+	// One-hop call-edge expansion: follow static calls out of the named symbols to
+	// surface a helper the task never named but the change turns on. It fills only
+	// the room the named symbols leave, so it never displaces a directly-asked one.
+	if len(out) < packMaxSymbols {
+		for _, d := range expandCallees(client, root, primaries, found, opened) {
+			out = append(out, d)
+			if len(out) >= packMaxSymbols {
+				break
+			}
+		}
+	}
 	return out
+}
+
+// lspPrimary is a resolved task-named symbol retained for the expansion pass: its
+// open document URI, its enclosing range, and the file's lines, so the pass can
+// scan the body for call sites without re-reading the file.
+type lspPrimary struct {
+	name  string
+	uri   string
+	rng   lsp.Range
+	lines []string
+}
+
+// callSite matches an identifier immediately followed by an open paren, the
+// textual shape of a call. It is deliberately loose: a false positive costs one
+// go-to-definition probe that resolves to nothing or outside the workspace and is
+// then dropped.
+var callSite = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+
+// callSkip drops call targets that are keywords, builtins, or too generic to be
+// worth a probe. Following them wastes an LSP round trip on something the model
+// already knows or that never resolves to a workspace definition.
+var callSkip = map[string]bool{
+	"if": true, "for": true, "while": true, "return": true, "print": true,
+	"len": true, "str": true, "int": true, "dict": true, "list": true,
+	"set": true, "tuple": true, "bool": true, "float": true, "type": true,
+	"super": true, "isinstance": true, "getattr": true, "setattr": true,
+	"hasattr": true, "range": true, "enumerate": true, "open": true,
+	"format": true, "repr": true, "self": true, "assert": true, "raise": true,
+}
+
+// cachedDoc is a target file opened once during expansion: its symbol tree, its
+// lines for slicing, and its extension for fencing.
+type cachedDoc struct {
+	syms  []lsp.DocumentSymbol
+	lines []string
+	ext   string
+}
+
+// expandCallees follows one static call hop out of each resolved task-named
+// symbol. For every call site in a primary's body it asks the server for the
+// callee's definition; when that definition lands in a workspace file the task
+// never named, it adds the enclosing symbol to the pack, marked with the primary
+// it was reached from. This surfaces the helper a named entry point dispatches
+// to, which is often where the branch the task turns on actually lives. It is
+// bounded on every axis (callees per symbol, total additions) and opens each
+// target file at most once. Every failure is silent, so expansion never worsens
+// a run whose named symbols resolved fine.
+func expandCallees(client *lsp.Client, root string, primaries []lspPrimary, found map[string]*symbolDef, opened map[string]bool) []symbolDef {
+	type key struct{ rel, name string }
+	docs := map[string]*cachedDoc{}
+	seen := map[key]bool{}
+	var out []symbolDef
+	for _, p := range primaries {
+		if len(out) >= packMaxExpand {
+			break
+		}
+		probes := 0
+		lo, hi := p.rng.Start.Line, p.rng.End.Line
+		if lo < 0 {
+			lo = 0
+		}
+		if hi >= len(p.lines) {
+			hi = len(p.lines) - 1
+		}
+		for ln := lo; ln <= hi && ln < len(p.lines); ln++ {
+			if len(out) >= packMaxExpand || probes >= packMaxCalleesPerSymbol {
+				break
+			}
+			for _, m := range callSite.FindAllStringSubmatchIndex(p.lines[ln], -1) {
+				if len(out) >= packMaxExpand || probes >= packMaxCalleesPerSymbol {
+					break
+				}
+				name := p.lines[ln][m[2]:m[3]]
+				if len(name) < packMinCalleeLen || callSkip[name] || found[name] != nil {
+					continue
+				}
+				probes++
+				locs, err := client.Definition(p.uri, ln, m[2])
+				if err != nil || len(locs) == 0 {
+					continue
+				}
+				loc := locs[0]
+				tpath := lsp.URIToPath(loc.URI)
+				rel, relErr := filepath.Rel(root, tpath)
+				if relErr != nil || strings.HasPrefix(rel, "..") {
+					continue // definition outside the workspace: stdlib, site-packages
+				}
+				cd := docs[loc.URI]
+				if cd == nil {
+					ext := strings.ToLower(filepath.Ext(tpath))
+					if _, ok := packSourceExt[ext]; !ok {
+						continue
+					}
+					data, rerr := os.ReadFile(tpath)
+					if rerr != nil {
+						continue
+					}
+					if !opened[loc.URI] {
+						if err := client.DidOpen(loc.URI, languageID(ext), string(data)); err != nil {
+							continue
+						}
+						opened[loc.URI] = true
+					}
+					ds, derr := client.DocumentSymbol(loc.URI)
+					if derr != nil {
+						continue
+					}
+					cd = &cachedDoc{syms: ds, lines: strings.Split(string(data), "\n"), ext: ext}
+					docs[loc.URI] = cd
+				}
+				sym, ok := enclosingSymbolAt(cd.syms, loc.Range.Start.Line)
+				if !ok {
+					continue
+				}
+				base := lastNameComponent(sym.Name)
+				if found[base] != nil {
+					continue // already carried as a named symbol
+				}
+				k := key{rel, base}
+				if seen[k] {
+					continue
+				}
+				seen[k] = true
+				out = append(out, symbolDef{
+					name: base,
+					rel:  rel,
+					line: sym.Range.Start.Line + 1,
+					lang: cd.ext,
+					body: sliceRange(cd.lines, sym.Range),
+					refs: lspRefs(client, root, loc.URI, sym.SelectionRange.Start, rel),
+					via:  p.name,
+				})
+				if len(out) >= packMaxExpand {
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
+// enclosingSymbolAt returns the deepest document symbol whose range contains the
+// zero-based line. The deepest match is preferred, so a method is chosen over the
+// class that contains it.
+func enclosingSymbolAt(syms []lsp.DocumentSymbol, line int) (lsp.DocumentSymbol, bool) {
+	for _, s := range syms {
+		if line < s.Range.Start.Line || line > s.Range.End.Line {
+			continue
+		}
+		if child, ok := enclosingSymbolAt(s.Children, line); ok {
+			return child, true
+		}
+		return s, true
+	}
+	return lsp.DocumentSymbol{}, false
 }
 
 // lspRefs collects the distinct files that reference the symbol at pos, marking
