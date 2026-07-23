@@ -34,6 +34,18 @@ const VerifyDirective = "Verification is not optional, and a check that never ru
 	"If loading it raises, the call errors, or a test fails, that is your bug to fix in this run, not a result to report. " +
 	"An edit whose only check was that it parses or compiles is unverified, and while any named test still fails you are not done."
 
+// ReproDirective is an optional addendum that orients a model toward the
+// reproduce-first workflow the reproduction gate (repro.go) enforces. The gate is
+// the mechanism; this only tells the model the order of work up front so it does
+// not have to discover it by being nudged. It asks the model to turn the reported
+// behavior into a small focused test, see it fail against the current code, and
+// only then fix until that test passes. Worded for any language and any task, it
+// names no file or symbol from the issue, so it is general and not tailored.
+// Appended only when the caller opts in, so it can be A/B'd.
+const ReproDirective = "Work reproduce-first. Before you change any source, turn the behavior the issue reports into a small, focused test: pick one concrete case the issue describes and write it as a script or test in a scratch file, separate from the project's own test suite. " +
+	"Run it against the unchanged code and confirm it FAILS: a reproduction that already passes is testing the wrong thing, and until you have a failing case you have not located the bug. " +
+	"Then make the smallest change that turns that test green, and rerun it to confirm. If more than one behavior is reported, add a case for each. The failing-then-passing test is your evidence the fix is real, not the fact that the code parses."
+
 // systemData fills the run-dependent parts of the prompt, matching the shape the
 // other engines use so the call site is identical.
 type systemData struct {

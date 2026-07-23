@@ -244,6 +244,15 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		if os.Getenv("TOMO_OI_GATE") == "1" {
 			e.ExecGate = true
 		}
+		// TOMO_OI_REPRO=1 arms the reproduction gate (spec 2109 S3) and appends its
+		// directive: a coding turn cannot end green unless an executing check first
+		// came back red this turn, so the model must reproduce the reported bug as a
+		// failing test before its fix turns it green. Stronger than the exec gate,
+		// which accepts any green run; this refuses a fix that was never shown needed.
+		if os.Getenv("TOMO_OI_REPRO") == "1" {
+			e.Repro = true
+			e.System = e.System + "\n\n" + oi.ReproDirective
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
