@@ -58,6 +58,11 @@ type Engine struct {
 	// came back green, not merely parsed or compiled it. Off by default so it can
 	// be A/B'd against the softer prompt directive.
 	ExecGate bool
+	// Repro arms the reproduction gate (repro.go): a turn that edited the worktree
+	// cannot end green unless an executing check first came back red this turn, so
+	// the model must reproduce the reported bug as a failing test before its fix
+	// turns it green. Off by default so it can be A/B'd against the plain exec gate.
+	Repro bool
 }
 
 // maxCallRetries is how many extra times a single model call is retried on a
@@ -125,6 +130,11 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	// code rather than only parsing it; anyCheck records that some check ran at all;
 	// execNudges caps the gate's firings. These matter only when ExecGate is armed.
 	lastCheckExec, anyCheck, execNudges := false, false, 0
+	// Reproduction gate state (repro.go, spec 2109 S3): reproRed records that an
+	// executing check has come back red at least once this turn, the proof the
+	// model's test captures the reported bug; reproNudges caps the gate's firings.
+	// These matter only when Repro is armed.
+	reproRed, reproNudges := false, 0
 	// The worktree baseline is captured lazily, on the first round that actually
 	// runs code, so a pure answer turn that never executes a block pays no git
 	// probe. tracked says the workspace is a git worktree, the precondition for the
@@ -223,6 +233,17 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 				turn = append(turn, provider.UserText(execCheckNudge))
 				continue
 			}
+			// Reproduction gate (spec 2109 S3): the model edited the tree and wants to
+			// stop on a green (or no) check, but no executing check ever came back red
+			// this turn, so it never demonstrated the reported bug. Refuse the ending and
+			// push it to write a failing reproduction first, bounded by reproLimit so a
+			// stuck run still terminates. Ordered after the exec gate so a run reaches
+			// this only once some executing check has passed.
+			if e.Repro && edited && !verifyFailed && !reproRed && reproNudges < reproLimit {
+				reproNudges++
+				turn = append(turn, provider.UserText(reproNudge))
+				continue
+			}
 			// No code to run and a change is in place: the model is done.
 			return turn, nil
 		}
@@ -256,6 +277,12 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 				roundVerified = i == len(blocks)-1
 				anyCheck = true
 				lastCheckExec = isExecutingCheck(b.Code)
+				// The reproduction gate's red signal: an executing check that failed is
+				// the model's own test reproducing the bug. A parse-only failure does not
+				// count, since it is not a behavior the fix has to turn green.
+				if isErr && lastCheckExec {
+					reproRed = true
+				}
 			}
 		}
 
@@ -296,7 +323,10 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 		// block to be last ensures no later action invalidated the check. When the
 		// executing-check gate is armed, the green verification must also have run the
 		// code (not just parsed it), so a weak check does not shortcut the finish.
-		if roundWrote && roundVerified && !verifyFailed && (!e.ExecGate || lastCheckExec) {
+		// When the reproduction gate is armed, the green verification must also have
+		// been preceded by a red one this turn, so a fix that was green from the start
+		// does not shortcut the finish without ever reproducing the bug.
+		if roundWrote && roundVerified && !verifyFailed && (!e.ExecGate || lastCheckExec) && (!e.Repro || reproRed) {
 			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 			return turn, nil
 		}
