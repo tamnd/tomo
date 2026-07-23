@@ -231,6 +231,12 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		if v, err := strconv.Atoi(os.Getenv("TOMO_MAX_ROUNDS")); err == nil {
 			e.MaxRounds = v
 		}
+		// TOMO_OI_VERIFY=1 appends the executing-check directive: the base prompt
+		// asks for a check, but the model treats ast.parse as one and ships code that
+		// never ran. This is the A/B knob for whether forcing a real run closes that.
+		if os.Getenv("TOMO_OI_VERIFY") == "1" {
+			e.System = e.System + "\n\n" + oi.VerifyDirective
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
