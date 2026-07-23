@@ -20,17 +20,19 @@ var systemPrompt = template.Must(template.New("oi-system").Parse(systemTmpl))
 
 // VerifyDirective is an optional addendum for the oi system prompt. The base
 // prompt already asks for a check after each edit, but a model reliably reads
-// "check" as "parse it" and ends a round on a file that ast.parse accepts and a
-// NameError crashes: a syntax check passes on code that has never run. This
+// "check" as "parse it" and ends a round on a file a parser accepts and a
+// runtime error crashes: a syntax check passes on code that has never run. This
 // directive closes that gap by demanding an executing check, one that actually
-// imports the edited module or runs the touched tests, and by naming the weak
-// checks that do not count. It is appended only when the caller opts in, so the
-// default prompt is unchanged and the two can be A/B'd against each other.
-const VerifyDirective = "Verification is not optional and a syntax check is not verification. " +
-	"`ast.parse`, `py_compile`, and printing \"syntax ok\" prove only that the file parses; they pass on code that raises the moment it runs. " +
-	"Before you stop, execute what you changed: import the module you edited and call the changed function on a concrete input from the task, or run the repository's own tests for the area you touched. " +
-	"If the import raises, the call errors, or a test fails, that is your bug to fix in this run, not a result to report. " +
-	"An edit whose only check was that it parses is unverified, and while any named test still fails you are not done."
+// loads the changed code or runs the touched tests, and by naming the weak
+// checks that do not count. It is worded for any language, with the check names
+// as examples rather than the whole rule, so it holds up once runs span more
+// than Python. It is appended only when the caller opts in, so the default
+// prompt is unchanged and the two can be A/B'd against each other.
+const VerifyDirective = "Verification is not optional, and a check that never runs the code is not verification. " +
+	"A parser, compiler, type-checker, or linter that only reads the source proves the code parses, not that it works; it passes on code that errors the moment it runs (a Python `ast.parse` or `py_compile`, a `tsc --noEmit`, a `go vet`, printing \"syntax ok\"). " +
+	"Before you stop, execute what you changed in the repository's own language and tooling: load or import the unit you edited and call the changed function on a concrete input from the task, or run the project's own tests for the area you touched. " +
+	"If loading it raises, the call errors, or a test fails, that is your bug to fix in this run, not a result to report. " +
+	"An edit whose only check was that it parses or compiles is unverified, and while any named test still fails you are not done."
 
 // systemData fills the run-dependent parts of the prompt, matching the shape the
 // other engines use so the call site is identical.
