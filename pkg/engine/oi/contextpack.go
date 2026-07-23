@@ -47,6 +47,19 @@ const (
 	packMaxFileBytes = 1 << 20
 	// packMaxFiles bounds the walk so a huge tree cannot stall the preamble.
 	packMaxFiles = 20_000
+	// packMaxExpand caps how many one-hop callee definitions the LSP path adds on
+	// top of the task-named symbols. A named function often turns on a branch that
+	// lives in a helper it calls but the task never names (the observed case: a
+	// loader entry point dispatches to a per-format loader the model never opens),
+	// so following the call edges surfaces the deciding code. Bounded so expansion
+	// stays a supplement, not the bulk of the pack.
+	packMaxExpand = 8
+	// packMaxCalleesPerSymbol bounds the go-to-definition probes per named symbol,
+	// so a large function body cannot fan out into an unbounded number of LSP calls.
+	packMaxCalleesPerSymbol = 24
+	// packMinCalleeLen drops one and two character call targets; a helper worth
+	// surfacing is almost always longer, and this keeps the probe list short.
+	packMinCalleeLen = 3
 )
 
 // packSourceExt is the set of extensions the pack scans for definitions. The map
@@ -142,6 +155,7 @@ type symbolDef struct {
 	lang string // extension key, drives fencing
 	body string // the sliced definition text
 	refs []string
+	via  string // when set, the named symbol whose body calls this one (one-hop callee)
 }
 
 // candidateSymbols extracts the identifiers a task leans on, in first-appearance
@@ -309,6 +323,9 @@ func renderPack(defs []symbolDef) string {
 	for _, d := range defs {
 		fence := fenceFor(d.lang)
 		fmt.Fprintf(&b, "\n## %s  —  %s:%d\n%s\n%s\n%s\n", d.name, d.rel, d.line, fence, d.body, "```")
+		if d.via != "" {
+			fmt.Fprintf(&b, "reached from %s (it calls this); the branch you need may be here.\n", d.via)
+		}
 		if len(d.refs) > 0 {
 			fmt.Fprintf(&b, "used in: %s\n", strings.Join(d.refs, ", "))
 		}
