@@ -82,6 +82,14 @@ type Engine struct {
 	// finish path and is independent of the other gates. Off by default so it can be
 	// A/B'd.
 	Regress bool
+	// Decompose arms the checklist decomposer (decompose.go): before the loop a
+	// focused call splits the issue into ordered items, and the run authors and
+	// gates a reproduction for one item at a time, folding each landed item into the
+	// regression baseline before the next, so a multi-item port is worked one
+	// coherent slice at a time instead of as one wall. It supersedes the
+	// test-authoring sub-flow on a real checklist and falls back to it on a
+	// single-item issue. Off by default so it can be A/B'd.
+	Decompose bool
 }
 
 // maxCallRetries is how many extra times a single model call is retried on a
@@ -129,22 +137,38 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	// the example gate, so it runs only when the example gate does not, and both arm
 	// the reproduction gate. testGenArmed records whether it wrote a usable file, so
 	// the gate is armed only when there is a real red-to-green target on disk.
+	// Checklist decomposer (decompose.go): on a multi-item issue it authors and gates
+	// one item's reproduction at a time, superseding the whole-issue test-authoring
+	// sub-flow. It runs first and, when it splits the issue into a real checklist,
+	// suppresses testgen so the run walks items one by one; on a single-item issue it
+	// disarms and testgen runs as usual. dec is the walk state, consulted at each
+	// finish to advance to the next item. issue is kept for the per-item authoring
+	// calls advance makes.
+	issue := assistantText(user.Blocks)
+	dec := &decomposer{e: e}
+	decArmed := false
+	if e.Decompose {
+		if msg, armed := dec.begin(ctx, issue, sink); armed {
+			turn = append(turn, provider.UserText(msg))
+			decArmed = armed
+		}
+	}
 	testGenArmed := false
-	if e.TestGen && !e.Examples {
-		if msg, armed := e.writeReproTests(ctx, assistantText(user.Blocks), sink); armed {
+	if e.TestGen && !e.Examples && !decArmed {
+		if msg, armed := e.writeReproTests(ctx, issue, sink); armed {
 			turn = append(turn, provider.UserText(msg))
 			testGenArmed = armed
 		}
 	}
 	if e.Examples {
-		if msg := examplesMessage(e.extractExamples(ctx, assistantText(user.Blocks))); msg != "" {
+		if msg := examplesMessage(e.extractExamples(ctx, issue)); msg != "" {
 			turn = append(turn, provider.UserText(msg))
 		}
 	}
-	// The reproduction gate is armed directly, by the issue-example gate, or by the
-	// test-authoring sub-flow, all of which depend on the same red-to-green finish
-	// discipline.
-	repro := e.Repro || e.Examples || testGenArmed
+	// The reproduction gate is armed directly, by the issue-example gate, by the
+	// test-authoring sub-flow, or by the checklist decomposer, all of which depend on
+	// the same red-to-green finish discipline.
+	repro := e.Repro || e.Examples || testGenArmed || decArmed
 	// Regression guard baseline (regression.go): the project's currently-passing
 	// tests, captured now, before the model edits anything, so the guard protects
 	// only behavior that predates this turn. Empty when the guard is off or no suite
@@ -307,6 +331,19 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 				turn = append(turn, provider.UserText(nudge))
 				continue
 			}
+			// Checklist decomposer (decompose.go): the model has stopped on a satisfied
+			// item (it reached here past the reproduction gate, so the item's test went
+			// red-to-green this turn). Advance to the next item, refreshing the protected
+			// baseline and re-arming the gate, and keep going; finish only when the
+			// checklist is exhausted.
+			if decArmed {
+				if dir, more := dec.advance(ctx, issue, sink); more {
+					greenBase = e.baselineGreen(ctx)
+					reproRed = false
+					turn = append(turn, provider.UserText(dir))
+					continue
+				}
+			}
 			// No code to run and a change is in place: the model is done.
 			return turn, nil
 		}
@@ -398,6 +435,20 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 				results = append(results, provider.Text(nudge))
 				turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 				continue
+			}
+			// Checklist decomposer (decompose.go): the current item's reproduction is
+			// green and nothing regressed, so this item has landed. Fold it into the
+			// protected baseline, author the next item's reproduction, re-arm the gate by
+			// clearing the red signal, and keep going. Only when the items are exhausted
+			// does the turn finish.
+			if decArmed {
+				if dir, more := dec.advance(ctx, issue, sink); more {
+					greenBase = e.baselineGreen(ctx)
+					reproRed = false
+					results = append(results, provider.Text(dir))
+					turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
+					continue
+				}
 			}
 			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 			return turn, nil

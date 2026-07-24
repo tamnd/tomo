@@ -4,6 +4,26 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+## v0.2.12
+
+A checklist decomposer for the oi engine: a multi-item issue is worked one item at a
+time instead of as one wall a cheap model cannot climb.
+
+### Added
+
+- The oi engine gains a checklist decomposer, armed with `TOMO_OI_DECOMPOSE=1`. Before
+  the loop a focused call splits the issue into ordered items, smallest and most
+  foundational first. On a real checklist the run authors a reproduction for one item at
+  a time, holds the reproduction gate to that item, and folds each landed item into the
+  regression baseline before authoring the next, so the model lands one coherent slice
+  at a time and keeps the earlier items working. On a single-item issue it disarms and
+  falls back to the test-authoring sub-flow, so nothing is lost on the bugs that flow
+  already handled. It reads only the issue text, never a hidden grading suite, and
+  supersedes the test-authoring sub-flow on a checklist. Off by default so it can be
+  A/B'd, and bounded to a fixed number of items so the walk terminates. It targets the
+  failure the test-authoring sub-flow left open on dynaconf-1225 (experiment 0081),
+  where a free model handed a thirteen-item port as one red wall never converged.
+
 ## v0.2.11
 
 A finish-side guard for the oi engine: a fix that turns its own reproduction green
