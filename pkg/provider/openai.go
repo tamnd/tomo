@@ -235,6 +235,14 @@ func retryableStatus(code int, body string) bool {
 	if code >= 500 || code == http.StatusTooManyRequests {
 		return true
 	}
+	// A 404 whose body is Go's bare mux default is a gateway momentarily
+	// missing its own route (opencode zen does this during deploys), not a
+	// wrong URL: a genuinely wrong path 404s deterministically and would never
+	// have worked before. An API-shaped 404 (JSON error naming a model or
+	// endpoint) still fails fast.
+	if code == http.StatusNotFound && strings.TrimSpace(body) == "404 page not found" {
+		return true
+	}
 	return gatewayUpstreamFailure(body)
 }
 
