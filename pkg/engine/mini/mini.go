@@ -44,6 +44,9 @@ type Engine struct {
 	Gate agent.Gate
 	// Workspace is the directory every command starts in.
 	Workspace string
+	// Template names the instance template, mini's per-benchmark configs:
+	// "" is the generic brief, "swebench" the issue-fixing one.
+	Template string
 	// MaxSteps caps the model calls in one turn. Zero is unbounded.
 	MaxSteps int
 	// Timeout kills a single command. Zero means defaultTimeout.
@@ -188,7 +191,7 @@ func (e *Engine) instance(ctx context.Context, task string) string {
 	if uname == "" {
 		uname = runtime.GOOS + " " + runtime.GOARCH
 	}
-	return instancePrompt(task, e.Workspace, uname, runtime.GOOS == "darwin")
+	return instancePrompt(e.Template, task, e.Workspace, uname, runtime.GOOS == "darwin")
 }
 
 // stream runs one model call, retrying a transient upstream failure with a

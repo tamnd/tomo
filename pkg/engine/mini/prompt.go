@@ -19,15 +19,28 @@ var systemText string
 //go:embed prompts/instance.md
 var instanceTmpl string
 
-var instanceTemplate = template.Must(template.New("mini-instance").Parse(instanceTmpl))
+//go:embed prompts/swebench.md
+var swebenchTmpl string
+
+var instanceTemplates = map[string]*template.Template{
+	"":         template.Must(template.New("mini-instance").Parse(instanceTmpl)),
+	"swebench": template.Must(template.New("mini-swebench").Parse(swebenchTmpl)),
+}
 
 // SystemPrompt is static: mini's system message carries no run state.
 func SystemPrompt() string { return systemText }
 
-// instancePrompt renders the first user message around the task.
-func instancePrompt(task, workspace, uname string, darwin bool) string {
+// instancePrompt renders the first user message around the task. name picks
+// the template, mirroring mini's per-benchmark configs: "" is the generic
+// mini.yaml brief, "swebench" the swebench_backticks issue-fixing brief with
+// its reproduce-then-edge-case workflow and patch submission flow.
+func instancePrompt(name, task, workspace, uname string, darwin bool) string {
+	t, ok := instanceTemplates[name]
+	if !ok {
+		t = instanceTemplates[""]
+	}
 	var b strings.Builder
-	_ = instanceTemplate.Execute(&b, struct {
+	_ = t.Execute(&b, struct {
 		Task      string
 		Workspace string
 		Uname     string
