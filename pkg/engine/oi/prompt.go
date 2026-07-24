@@ -71,6 +71,31 @@ const ScopeDirective = "Make the smallest change that fixes the issue. The grade
 	"You must not break what already works: before you finish, run the existing tests for the area you touched (the project's own test file for that module, in its own test runner) and confirm every test that passed before your change still passes. " +
 	"If your change makes a previously-passing test fail, that regression is your bug to fix or revert in this run, not something to leave behind. A fix that trades one behavior for another is not a fix."
 
+// FocusDirective is an optional addendum that fights the sprawl-into-exploration
+// failure mode measured on dynaconf-1225 at both ends of the model range
+// (experiments 0079, 0080): a strong model at maximum reasoning effort and a
+// cheap free model BOTH read the issue's long "port these N items" checklist as
+// one wide surface, spent their whole round budget reading source and running the
+// existing suite across every item, and finished with an EMPTY patch, no source
+// change at all, scoring nothing. The reproduction gate cannot save that run: it
+// holds a finish until a red-to-green, but a model that never tries to finish and
+// just keeps exploring hits the round cap with nothing committed. This directive
+// forces convergence: treat a multi-item issue as independent items graded
+// separately, and land them one at a time, writing each item's focused test,
+// fixing it in the source, and confirming green before moving to the next, so
+// every round budget spent leaves at least one committed fix behind. It names the
+// anti-pattern directly, a turn that only read code and ran existing tests has
+// produced nothing gradeable, because the measured failure was exactly that.
+// Worded for any language and any task, naming no file or symbol from the issue,
+// so it is general and not tailored. Meant to pair with the issue-example gate,
+// which supplies the per-item checklist this directive tells the model to burn
+// down one at a time. Appended only when the caller opts in, so it can be A/B'd.
+const FocusDirective = "If the issue lists several things to change, they are graded independently, so land them one at a time instead of studying all of them at once. " +
+	"Pick the single most concrete item, write its small focused test, make that test pass by editing the source, confirm it is green, and only then move to the next item; do not open every item, read every file, and run the whole suite before you have changed a single line. " +
+	"Every stretch of work must leave a committed source change behind: a turn that only read code, inspected functions, and ran the existing tests has produced nothing that can be graded, and if your budget runs out with no source edit you have scored zero no matter how much you understood. " +
+	"When in doubt, make the smallest real fix you are sure of now, verify it, and keep it, rather than gathering more context for a bigger change you may never finish. " +
+	"Reproduction and understanding serve the fix; they are not a substitute for it, and an unfixed run is a failed run."
+
 // systemData fills the run-dependent parts of the prompt, matching the shape the
 // other engines use so the call site is identical.
 type systemData struct {

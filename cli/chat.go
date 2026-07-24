@@ -276,6 +276,16 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		if os.Getenv("TOMO_OI_EXAMPLES") == "1" {
 			e.Examples = true
 		}
+		// TOMO_OI_FOCUS=1 appends the convergence directive (FocusDirective): treat a
+		// multi-item issue as independent items and land them one at a time, leaving a
+		// committed source change behind each stretch of work. It targets the
+		// sprawl-into-exploration empty-patch failure measured on dynaconf-1225 at both
+		// ends of the model range, and is meant to pair with the issue-example gate,
+		// which supplies the per-item checklist to burn down. It names no file or symbol
+		// from the issue, so it stays general and untailored.
+		if os.Getenv("TOMO_OI_FOCUS") == "1" {
+			e.System = e.System + "\n\n" + oi.FocusDirective
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
