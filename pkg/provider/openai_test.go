@@ -431,6 +431,8 @@ func TestRetryableStatus(t *testing.T) {
 		{"400 malformed request", 400, `{"error":{"message":"Invalid 'messages': too long","type":"invalid_request_error"}}`, false},
 		{"401 auth", 401, "invalid api key", false},
 		{"404 model", 404, "model not found", false},
+		{"404 bare mux default", 404, "404 page not found\n", true},
+		{"404 json api error", 404, `{"error":{"message":"Unknown endpoint","type":"invalid_request_error"}}`, false},
 	}
 	for _, c := range cases {
 		if got := retryableStatus(c.code, c.body); got != c.want {
