@@ -33,6 +33,16 @@ without drowning its own context.
   vague multi-behavior issue into a per-case contract the model cannot satisfy by
   fixing only the one case it happened to try. It reads the issue text alone, never
   the workspace or any hidden test, and is off by default so it can be A/B'd.
+- The oi engine gains a convergence directive, appended with `TOMO_OI_FOCUS=1`. When
+  an issue lists several things to change, it tells the model they are graded
+  independently and to land them one at a time, writing each item's focused test,
+  fixing it in the source, and confirming green before the next, so every stretch of
+  work leaves a committed change behind. It targets an empty-patch failure measured
+  at both ends of the model range, where a strong model at maximum reasoning effort
+  and a cheap free model both read a long "port these N items" issue as one surface,
+  explored every item, and finished with no source edit at all. It names no file or
+  symbol from the issue and is off by default, meant to pair with the issue-example
+  gate.
 
 ### Changed
 
