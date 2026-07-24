@@ -75,6 +75,13 @@ type Engine struct {
 	// pass. It supersedes the example gate rather than stacking with it, so the run
 	// pays one authoring call. Off by default so it can be A/B'd.
 	TestGen bool
+	// Regress arms the regression guard (regression.go): before the loop the
+	// harness records the project's currently-passing tests, and a turn that edited
+	// the tree cannot end while any of those now fails, so a fix that turns the
+	// reproduction green but breaks working behavior is refused. It pairs with any
+	// finish path and is independent of the other gates. Off by default so it can be
+	// A/B'd.
+	Regress bool
 }
 
 // maxCallRetries is how many extra times a single model call is retried on a
@@ -138,6 +145,16 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	// test-authoring sub-flow, all of which depend on the same red-to-green finish
 	// discipline.
 	repro := e.Repro || e.Examples || testGenArmed
+	// Regression guard baseline (regression.go): the project's currently-passing
+	// tests, captured now, before the model edits anything, so the guard protects
+	// only behavior that predates this turn. Empty when the guard is off or no suite
+	// runs green, which disarms it. Any authored reproduction already sits on disk,
+	// and passingTests ignores it, so the scratch test never enters the baseline.
+	var greenBase map[string]bool
+	if e.Regress {
+		greenBase = e.baselineGreen(ctx)
+	}
+	regressNudges := 0
 	continues := 0
 	round := 0
 	// The dialect is chosen from the model: how this model natively writes an
@@ -283,6 +300,13 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 				turn = append(turn, provider.UserText(reproNudge))
 				continue
 			}
+			// Regression guard (regression.go): the model wants to stop, but if the turn
+			// broke tests that passed before it, refuse the ending and name them so the
+			// model repairs the regression before it commits it. Bounded by regressLimit.
+			if nudge := e.regressionGuard(ctx, greenBase, edited, &regressNudges); nudge != "" {
+				turn = append(turn, provider.UserText(nudge))
+				continue
+			}
 			// No code to run and a change is in place: the model is done.
 			return turn, nil
 		}
@@ -366,6 +390,15 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 		// been preceded by a red one this turn, so a fix that was green from the start
 		// does not shortcut the finish without ever reproducing the bug.
 		if roundWrote && roundVerified && !verifyFailed && (!e.ExecGate || lastCheckExec) && (!repro || reproRed) {
+			// Regression guard (regression.go): a green reproduction is not a finish if
+			// the change broke tests that were passing before this turn. When it has,
+			// append the naming nudge to this round's results and keep going rather than
+			// return, bounded by regressLimit so a run still terminates.
+			if nudge := e.regressionGuard(ctx, greenBase, edited, &regressNudges); nudge != "" {
+				results = append(results, provider.Text(nudge))
+				turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
+				continue
+			}
 			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 			return turn, nil
 		}

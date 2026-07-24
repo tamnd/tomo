@@ -297,6 +297,16 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		if os.Getenv("TOMO_OI_TESTGEN") == "1" {
 			e.TestGen = true
 		}
+		// TOMO_OI_REGRESS=1 arms the regression guard (regression.go): before the loop
+		// the harness records the project's currently-passing tests, and a turn that
+		// edited the tree cannot end while any of those now fails. It targets the
+		// failure the test-authoring sub-flow left open, where a cheap model handed one
+		// broad red test over-edits, turns it green, and regresses the working suite. It
+		// runs only the project's own existing tests, never the hidden grading suite, so
+		// it stays general and untailored. It pairs with any finish path.
+		if os.Getenv("TOMO_OI_REGRESS") == "1" {
+			e.Regress = true
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
