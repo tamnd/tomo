@@ -54,6 +54,23 @@ const ReproDirective = "You owe two things before you finish, and you may do the
 	"That test must FAIL on the original behavior and PASS after your fix: run it both against the broken state and against your change, so the red-then-green transition is real evidence and not a test that was always green. " +
 	"If more than one behavior is reported, add a case for each. The failing-then-passing test is your evidence the fix works, not the fact that the code parses."
 
+// ScopeDirective is an optional addendum that fights the sprawl-and-regress
+// failure mode measured on dynaconf-1225 (experiments 0074, 0075): every arm
+// rewrote 11 to 14 files for a fix that lived in two functions, got the logic
+// wrong, and the strongest model broke three previously-passing tests in the
+// churn. This directive holds the model to the smallest correct diff and forbids
+// regressions: make the narrowest change that fixes the issue, revert edits that
+// are not needed, and before finishing run the area's existing tests and keep
+// every one that passed before still passing. It pairs with the exec gate, which
+// refuses a finish whose only check parsed the source, so the model is forced to
+// actually run those existing tests rather than claim it did. Worded for any
+// language, naming no file or symbol from the issue, so it is general and not
+// tailored. Appended only when the caller opts in, so it can be A/B'd.
+const ScopeDirective = "Make the smallest change that fixes the issue. The graded fix is almost always a few functions in one or two files, not a rewrite: find the specific place the reported behavior is decided and change only that, and if you edited something you did not end up needing, revert it before you finish. " +
+	"A large diff across many files is a warning sign you are guessing, not fixing. " +
+	"You must not break what already works: before you finish, run the existing tests for the area you touched (the project's own test file for that module, in its own test runner) and confirm every test that passed before your change still passes. " +
+	"If your change makes a previously-passing test fail, that regression is your bug to fix or revert in this run, not something to leave behind. A fix that trades one behavior for another is not a fix."
+
 // systemData fills the run-dependent parts of the prompt, matching the shape the
 // other engines use so the call site is identical.
 type systemData struct {

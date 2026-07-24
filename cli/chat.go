@@ -253,6 +253,17 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 			e.Repro = true
 			e.System = e.System + "\n\n" + oi.ReproDirective
 		}
+		// TOMO_OI_SCOPE=1 arms the scope lever: the exec gate (so an executing
+		// check must actually run) plus the scope directive, which holds the model
+		// to the smallest correct diff and forbids regressing a previously-passing
+		// test. It targets the sprawl-and-regress failure mode measured on
+		// dynaconf-1225 (a stronger model wrote the largest patch and broke three
+		// passing tests). Independent of the repro knob so scope discipline can be
+		// A/B'd on its own, without the reproduce-first workflow that starved the fix.
+		if os.Getenv("TOMO_OI_SCOPE") == "1" {
+			e.ExecGate = true
+			e.System = e.System + "\n\n" + oi.ScopeDirective
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
