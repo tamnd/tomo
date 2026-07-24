@@ -333,6 +333,9 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 			Box:       parts.box,
 			Gate:      guard,
 			Workspace: parts.workspace,
+			// TOMO_MINI_TEMPLATE picks the instance template, mini's
+			// per-benchmark configs: "swebench" for issue-fixing tasks.
+			Template: os.Getenv("TOMO_MINI_TEMPLATE"),
 		}
 		// TOMO_MINI_MAX_STEPS bounds the model calls in one run, mini's
 		// step_limit; zero or unset is unbounded, which is mini's default.

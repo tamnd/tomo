@@ -285,3 +285,24 @@ func TestFinished(t *testing.T) {
 		}
 	}
 }
+
+func TestSwebenchTemplate(t *testing.T) {
+	p := &scriptProvider{responses: []*provider.Response{
+		reply("```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n```"),
+	}}
+	e := newEngine(t, p)
+	e.Template = "swebench"
+	turn, err := e.Turn(context.Background(), nil, provider.UserText("the issue text"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := messageText(turn[0].Blocks)
+	for _, want := range []string{"<pr_description>", "the issue text", "DO NOT MODIFY: Tests", "Test edge cases", e.Workspace} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("swebench template missing %q", want)
+		}
+	}
+	if strings.Contains(first, "Recommended Workflow\n1. Look around") {
+		t.Fatal("generic template leaked into swebench render")
+	}
+}
