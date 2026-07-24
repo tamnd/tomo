@@ -91,31 +91,47 @@ func (e *Engine) writeReproTests(ctx context.Context, issue string, sink agent.S
 	if issue == "" || e.Workspace == "" {
 		return "", false
 	}
-	code := e.authorReproTests(ctx, issue, "")
-	if code == "" {
+	if !e.authorAndInstall(ctx, issue) {
 		return "", false
+	}
+	if sink != nil {
+		sink.Text("\n[testgen] wrote reproduction tests to " + reproTestFile + "\n")
+	}
+	return fmt.Sprintf(testgenDirective, reproTestFile), true
+}
+
+// authorAndInstall makes the authoring call for the given prompt, writes the
+// returned file to the workspace reproduction path, and smoke-checks that it
+// collects, regenerating once with the collector's error fed back. It returns
+// whether a collectable reproduction is now on disk. It is the shared installer
+// for the whole-issue test-authoring sub-flow and the per-item checklist
+// decomposer, which differ only in the authoring prompt: one file, one path, one
+// collect discipline. A file that will not collect after one retry is removed, so
+// a caller that gets false is left with no scratch test and can leave the loop
+// unchanged rather than arm a gate on a file that can never go green.
+func (e *Engine) authorAndInstall(ctx context.Context, prompt string) bool {
+	code := e.authorReproTests(ctx, prompt, "")
+	if code == "" {
+		return false
 	}
 	path := filepath.Join(e.Workspace, reproTestFile)
 	if err := os.WriteFile(path, []byte(code), 0o644); err != nil {
-		return "", false
+		return false
 	}
 	if ok, collectErr := e.collectTest(ctx, reproTestFile); !ok {
 		// A test that cannot even collect is malformed (a bad import, a syntax slip).
 		// Regenerate once with the collector's own error fed back, then re-check.
-		if code = e.authorReproTests(ctx, issue, collectErr); code != "" {
+		if code = e.authorReproTests(ctx, prompt, collectErr); code != "" {
 			_ = os.WriteFile(path, []byte(code), 0o644)
 		}
 		if ok, _ := e.collectTest(ctx, reproTestFile); !ok {
 			// Still broken: a red-to-green gate on a file that can never collect would
 			// trap the model forever. Remove it and leave the loop unchanged.
 			_ = os.Remove(path)
-			return "", false
+			return false
 		}
 	}
-	if sink != nil {
-		sink.Text("\n[testgen] wrote reproduction tests to " + reproTestFile + "\n")
-	}
-	return fmt.Sprintf(testgenDirective, reproTestFile), true
+	return true
 }
 
 // authorReproTests makes one authoring call and returns the code of the first

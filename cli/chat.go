@@ -307,6 +307,16 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		if os.Getenv("TOMO_OI_REGRESS") == "1" {
 			e.Regress = true
 		}
+		// TOMO_OI_DECOMPOSE=1 arms the checklist decomposer (decompose.go): before the
+		// loop a focused call splits the issue into ordered items, and the run authors
+		// and gates a reproduction one item at a time, folding each landed item into the
+		// regression baseline before the next. It targets the failure the test-authoring
+		// sub-flow left open on a multi-item issue, where a cheap model handed the whole
+		// checklist as one red wall never converges. It reads only the issue text and
+		// supersedes the test-authoring sub-flow on a real checklist.
+		if os.Getenv("TOMO_OI_DECOMPOSE") == "1" {
+			e.Decompose = true
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
