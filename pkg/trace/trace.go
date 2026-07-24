@@ -1,27 +1,32 @@
-// Package trace records model calls in a normalized, content-addressed ledger.
-// Repeated system prompts, tool schemas, messages, and responses are stored once
-// and referenced by hash from each call. SQLite indexes runs by date, model,
-// provider, and task so later analysis does not need to scan raw wire logs.
+// Package trace records model calls as an append-only JSONL rollout, one file
+// per run. Each line is a self-contained record — a run header, then one record
+// per call carrying its system prompt, tool set, messages, response, usage, and
+// priced cost. There is no shared database, no lock, and no checkpoint step, so
+// a run's trace is complete the instant its last call returns and survives being
+// copied out of a container mid-flight. This is the canonical session store the
+// other agents keep (codex, opencode, claude each write their own rollout); tomo
+// keeps the same, which is what makes a tomo run reconstructable downstream.
 package trace
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
-
-	_ "modernc.org/sqlite"
 
 	"github.com/tamnd/tomo/pkg/provider"
 )
@@ -44,92 +49,46 @@ type Pricing struct {
 	OutputUSDPerMillion     float64 `json:"output_usd_per_million"`
 }
 
+// runHeader is the first line of a run's rollout: the metadata known when the
+// first call is recorded. Everything else about the run (end time, aggregate
+// usage, cost, status) is derived by folding the call records, so writing stays
+// pure append with no line ever rewritten.
+type runHeader struct {
+	ID        string `json:"id"`
+	RunDate   string `json:"run_date"`
+	StartedAt string `json:"started_at"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	TaskID    string `json:"task_id"`
+	TaskLabel string `json:"task_label"`
+}
+
+// storeLine is one line of a rollout: a tagged union of the run header and a
+// call record, so a reader can scan the file with a single decode per line.
+type storeLine struct {
+	Type string      `json:"type"`
+	Run  *runHeader  `json:"run,omitempty"`
+	Call *callRecord `json:"call,omitempty"`
+}
+
 type tracedProvider struct {
 	base     provider.Provider
 	opts     Options
 	runID    string
 	started  time.Time
 	sequence atomic.Int64
-	db       *sql.DB
+
+	mu          sync.Mutex
+	file        *os.File
+	wroteHeader bool
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS objects (
-  hash       TEXT PRIMARY KEY,
-  kind       TEXT NOT NULL,
-  payload    BLOB NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS runs (
-  id                  TEXT PRIMARY KEY,
-  run_date            TEXT NOT NULL,
-  started_at          TEXT NOT NULL,
-  ended_at            TEXT NOT NULL DEFAULT '',
-  provider            TEXT NOT NULL,
-  model               TEXT NOT NULL DEFAULT '',
-  task_id             TEXT NOT NULL DEFAULT '',
-  task_label          TEXT NOT NULL DEFAULT '',
-  status              TEXT NOT NULL DEFAULT 'running',
-  calls               INTEGER NOT NULL DEFAULT 0,
-  failed_calls        INTEGER NOT NULL DEFAULT 0,
-  input_tokens        INTEGER NOT NULL DEFAULT 0,
-  cached_input_tokens INTEGER NOT NULL DEFAULT 0,
-  cache_write_input_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens       INTEGER NOT NULL DEFAULT 0,
-  reasoning_tokens    INTEGER NOT NULL DEFAULT 0,
-  total_tokens        INTEGER NOT NULL DEFAULT 0,
-  priced_calls        INTEGER NOT NULL DEFAULT 0,
-  unpriced_calls      INTEGER NOT NULL DEFAULT 0,
-  input_cost_nanos    INTEGER NOT NULL DEFAULT 0,
-  cached_cost_nanos   INTEGER NOT NULL DEFAULT 0,
-  cache_write_cost_nanos INTEGER NOT NULL DEFAULT 0,
-  output_cost_nanos   INTEGER NOT NULL DEFAULT 0,
-  cost_nanos          INTEGER NOT NULL DEFAULT 0,
-  duration_ms         INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS runs_date_model ON runs(run_date, model);
-CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id, started_at);
-CREATE INDEX IF NOT EXISTS runs_provider ON runs(provider, started_at);
-CREATE TABLE IF NOT EXISTS calls (
-  id                  INTEGER PRIMARY KEY,
-  run_id              TEXT NOT NULL REFERENCES runs(id),
-  sequence            INTEGER NOT NULL,
-  started_at          TEXT NOT NULL,
-  duration_ms         INTEGER NOT NULL,
-  system_hash         TEXT NOT NULL DEFAULT '',
-  tools_hash          TEXT NOT NULL DEFAULT '',
-  response_hash       TEXT NOT NULL DEFAULT '',
-  error_hash          TEXT NOT NULL DEFAULT '',
-  stop_reason         TEXT NOT NULL DEFAULT '',
-  input_tokens        INTEGER NOT NULL DEFAULT 0,
-  cached_input_tokens INTEGER NOT NULL DEFAULT 0,
-  cache_write_input_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens       INTEGER NOT NULL DEFAULT 0,
-  reasoning_tokens    INTEGER NOT NULL DEFAULT 0,
-  total_tokens        INTEGER NOT NULL DEFAULT 0,
-  pricing_known       INTEGER NOT NULL DEFAULT 0,
-  input_price         REAL NOT NULL DEFAULT 0,
-  cached_input_price  REAL NOT NULL DEFAULT 0,
-  cache_write_price   REAL NOT NULL DEFAULT 0,
-  output_price        REAL NOT NULL DEFAULT 0,
-  input_cost_nanos    INTEGER NOT NULL DEFAULT 0,
-  cached_cost_nanos   INTEGER NOT NULL DEFAULT 0,
-  cache_write_cost_nanos INTEGER NOT NULL DEFAULT 0,
-  output_cost_nanos   INTEGER NOT NULL DEFAULT 0,
-  cost_nanos          INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(run_id, sequence)
-);
-CREATE INDEX IF NOT EXISTS calls_run ON calls(run_id, sequence);
-CREATE TABLE IF NOT EXISTS call_messages (
-  call_id      INTEGER NOT NULL REFERENCES calls(id),
-  position     INTEGER NOT NULL,
-  object_hash  TEXT NOT NULL REFERENCES objects(hash),
-  PRIMARY KEY(call_id, position)
-);
-`
+// runPath is where a run's rollout lives: one file named by the run id, so a
+// run is a single self-contained artifact and two runs never share a file.
+func runPath(dir, id string) string { return filepath.Join(dir, id+".jsonl") }
 
-// Wrap validates the trace ledger and returns a transparent provider wrapper.
+// Wrap validates the trace directory and returns a transparent provider wrapper
+// that appends every call to this run's rollout file.
 func Wrap(base provider.Provider, opts Options) (provider.Provider, error) {
 	if base == nil {
 		return nil, fmt.Errorf("trace: provider is nil")
@@ -137,12 +96,16 @@ func Wrap(base provider.Provider, opts Options) (provider.Provider, error) {
 	if strings.TrimSpace(opts.Dir) == "" {
 		return nil, fmt.Errorf("trace: directory is empty")
 	}
-	db, err := open(opts.Dir)
-	if err != nil {
-		return nil, err
+	if err := os.MkdirAll(opts.Dir, 0o700); err != nil {
+		return nil, fmt.Errorf("trace: create directory: %w", err)
 	}
 	now := time.Now().UTC()
-	return &tracedProvider{base: base, opts: opts, runID: newRunID(now), started: now, db: db}, nil
+	runID := newRunID(now)
+	file, err := os.OpenFile(runPath(opts.Dir, runID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("trace: open run log: %w", err)
+	}
+	return &tracedProvider{base: base, opts: opts, runID: runID, started: now, file: file}, nil
 }
 
 func (t *tracedProvider) Stream(ctx context.Context, req provider.Request, emit func(provider.Event)) (*provider.Response, error) {
@@ -156,124 +119,169 @@ func (t *tracedProvider) Stream(ctx context.Context, req provider.Request, emit 
 	return resp, callErr
 }
 
+// record builds this call's record and appends it (with the run header first, if
+// not yet written) to the rollout. A failed call is recorded with its error and
+// the provider's own result is never altered.
 func (t *tracedProvider) record(req provider.Request, resp *provider.Response, callErr error, sequence int64, started, ended time.Time) error {
-	var err error
-	for attempt := 0; attempt < 8; attempt++ {
-		err = t.recordOnce(req, resp, callErr, sequence, started, ended)
-		if err == nil || !databaseBusy(err) {
-			return err
-		}
-		time.Sleep(time.Duration(10*(1<<attempt)) * time.Millisecond)
-	}
-	return err
-}
-
-func (t *tracedProvider) recordOnce(req provider.Request, resp *provider.Response, callErr error, sequence int64, started, ended time.Time) error {
-	tx, err := t.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	taskID, taskLabel := taskOf(req)
-	_, err = tx.Exec(`INSERT INTO runs(id, run_date, started_at, provider, model, task_id, task_label)
-		VALUES(?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-		  model = CASE WHEN runs.model = '' THEN excluded.model ELSE runs.model END,
-		  task_id = CASE WHEN runs.task_id = '' THEN excluded.task_id ELSE runs.task_id END,
-		  task_label = CASE WHEN runs.task_label = '' THEN excluded.task_label ELSE runs.task_label END`,
-		t.runID, t.started.Format("2006-01-02"), stamp(t.started), t.opts.Provider, req.Model, taskID, taskLabel)
-	if err != nil {
-		return err
-	}
-
-	systemHash, err := putObject(tx, "system", req.System)
-	if err != nil {
-		return err
-	}
-	toolsHash, err := putObject(tx, "tools", stableTools(req.Tools))
-	if err != nil {
-		return err
-	}
-	responseHash := ""
-	stopReason := ""
 	usage := provider.Usage{}
+	var response *recordedResponse
+	stopReason := ""
 	if resp != nil {
-		responseHash, err = putObject(tx, "response", stableResponse(resp))
-		if err != nil {
-			return err
-		}
+		captured := stableResponse(resp)
+		response = &captured
 		stopReason = resp.StopReason
 		usage = resp.Usage.Normalize()
 	}
-	errorHash := ""
-	failed := 0
+	var errRaw json.RawMessage
 	if callErr != nil {
-		errorHash, err = putObject(tx, "error", map[string]string{"message": callErr.Error()})
-		if err != nil {
-			return err
-		}
-		failed = 1
+		errRaw, _ = json.Marshal(map[string]string{"message": callErr.Error()})
 	}
-	duration := ended.Sub(started).Milliseconds()
 	pricing := t.opts.Pricing
 	if modelPricing, ok := t.opts.PricingByModel[req.Model]; ok {
 		pricing = &modelPricing
 	}
 	cost := priceUsage(usage, pricing)
-	res, err := tx.Exec(`INSERT INTO calls(
-		run_id, sequence, started_at, duration_ms, system_hash, tools_hash,
-		response_hash, error_hash, stop_reason, input_tokens, cached_input_tokens,
-		cache_write_input_tokens, output_tokens, reasoning_tokens, total_tokens,
-		pricing_known, input_price, cached_input_price, cache_write_price, output_price,
-		input_cost_nanos, cached_cost_nanos, cache_write_cost_nanos, output_cost_nanos, cost_nanos)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.runID, sequence, stamp(started), duration, systemHash, toolsHash,
-		responseHash, errorHash, stopReason, usage.InputTokens, usage.CachedInputTokens,
-		usage.CacheWriteInputTokens, usage.OutputTokens, usage.ReasoningTokens, usage.TotalTokens,
-		cost.Known, cost.InputPrice, cost.CachedPrice, cost.CacheWritePrice, cost.OutputPrice,
-		cost.InputNanos, cost.CachedNanos, cost.CacheWriteNanos, cost.OutputNanos, cost.TotalNanos)
-	if err != nil {
-		return err
+	rec := callRecord{
+		Sequence: sequence, StartedAt: stamp(started), DurationMS: ended.Sub(started).Milliseconds(),
+		System: req.System, Tools: stableTools(req.Tools), Messages: req.Messages,
+		Response: response, Error: errRaw, StopReason: stopReason,
+		InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
+		CacheWriteInputTokens: usage.CacheWriteInputTokens, OutputTokens: usage.OutputTokens,
+		ReasoningTokens: usage.ReasoningTokens, TotalTokens: usage.TotalTokens,
+		PricingKnown: cost.Known,
+		Pricing: Pricing{
+			InputUSDPerMillion: cost.InputPrice, CachedUSDPerMillion: cost.CachedPrice,
+			CacheWriteUSDPerMillion: cost.CacheWritePrice, OutputUSDPerMillion: cost.OutputPrice,
+		},
+		InputCostNanos: cost.InputNanos, CachedCostNanos: cost.CachedNanos,
+		CacheWriteCostNanos: cost.CacheWriteNanos, OutputCostNanos: cost.OutputNanos,
+		CostNanos: cost.TotalNanos, CostUSD: nanosUSD(cost.TotalNanos),
 	}
-	callID, err := res.LastInsertId()
-	if err != nil {
-		return err
-	}
-	for i, message := range req.Messages {
-		hash, err := putObject(tx, "message", message)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`INSERT INTO call_messages(call_id, position, object_hash) VALUES(?, ?, ?)`, callID, i, hash); err != nil {
-			return err
-		}
-	}
-	_, err = tx.Exec(`UPDATE runs SET
-		ended_at = ?, calls = calls + 1, failed_calls = failed_calls + ?,
-		input_tokens = input_tokens + ?, cached_input_tokens = cached_input_tokens + ?,
-		cache_write_input_tokens = cache_write_input_tokens + ?, output_tokens = output_tokens + ?,
-		reasoning_tokens = reasoning_tokens + ?, total_tokens = total_tokens + ?,
-		priced_calls = priced_calls + ?, unpriced_calls = unpriced_calls + ?,
-		input_cost_nanos = input_cost_nanos + ?, cached_cost_nanos = cached_cost_nanos + ?,
-		cache_write_cost_nanos = cache_write_cost_nanos + ?, output_cost_nanos = output_cost_nanos + ?,
-		cost_nanos = cost_nanos + ?, duration_ms = duration_ms + ?,
-		status = CASE WHEN failed_calls + ? > 0 THEN 'partial' ELSE 'complete' END
-		WHERE id = ?`, stamp(ended), failed, usage.InputTokens, usage.CachedInputTokens,
-		usage.CacheWriteInputTokens, usage.OutputTokens, usage.ReasoningTokens, usage.TotalTokens,
-		boolInt(cost.Known), boolInt(!cost.Known), cost.InputNanos, cost.CachedNanos,
-		cost.CacheWriteNanos, cost.OutputNanos, cost.TotalNanos, duration, failed, t.runID)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return t.appendCall(req, rec)
 }
 
-func databaseBusy(err error) bool {
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "database is locked") ||
-		strings.Contains(message, "database table is locked") ||
-		strings.Contains(message, "sqlite_busy") || strings.Contains(message, "sqlite_locked")
+func (t *tracedProvider) appendCall(req provider.Request, rec callRecord) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.wroteHeader {
+		taskID, taskLabel := taskOf(req)
+		header := runHeader{
+			ID: t.runID, RunDate: t.started.Format("2006-01-02"), StartedAt: stamp(t.started),
+			Provider: t.opts.Provider, Model: req.Model, TaskID: taskID, TaskLabel: taskLabel,
+		}
+		if err := t.writeLine(storeLine{Type: "run", Run: &header}); err != nil {
+			return err
+		}
+		t.wroteHeader = true
+	}
+	return t.writeLine(storeLine{Type: "call", Call: &rec})
+}
+
+func (t *tracedProvider) writeLine(line storeLine) error {
+	payload, err := json.Marshal(line)
+	if err != nil {
+		return err
+	}
+	payload = scrub(payload)
+	if _, err := t.file.Write(append(payload, '\n')); err != nil {
+		return err
+	}
+	return nil
+}
+
+// readRun reads a run's rollout by id, returning its header and calls.
+func readRun(dir, runID string) (runHeader, []callRecord, error) {
+	file, err := os.Open(runPath(dir, runID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return runHeader{}, nil, fmt.Errorf("trace run %q not found", runID)
+		}
+		return runHeader{}, nil, err
+	}
+	defer file.Close()
+	return scanRun(file)
+}
+
+// scanRun decodes a rollout stream into its header and call records. A line that
+// is neither (a foreign file that merely shares the .jsonl suffix, such as an
+// exported STS session) is ignored, so scanning a directory is tolerant.
+func scanRun(r io.Reader) (runHeader, []callRecord, error) {
+	var header runHeader
+	var calls []callRecord
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 1<<20), 64<<20)
+	for scanner.Scan() {
+		raw := bytes.TrimSpace(scanner.Bytes())
+		if len(raw) == 0 {
+			continue
+		}
+		var line storeLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return header, calls, err
+		}
+		switch line.Type {
+		case "run":
+			if line.Run != nil {
+				header = *line.Run
+			}
+		case "call":
+			if line.Call != nil {
+				line.Call.CostUSD = nanosUSD(line.Call.CostNanos)
+				calls = append(calls, *line.Call)
+			}
+		}
+	}
+	return header, calls, scanner.Err()
+}
+
+// foldRun derives a run's cumulative row from its header and calls: the totals,
+// the end time (last call's start plus its duration), and the status, which is
+// partial when any call failed and complete otherwise.
+func foldRun(header runHeader, calls []callRecord) Run {
+	run := Run{
+		ID: header.ID, Date: header.RunDate, StartedAt: header.StartedAt, EndedAt: header.StartedAt,
+		Provider: header.Provider, Model: header.Model, TaskID: header.TaskID, TaskLabel: header.TaskLabel,
+		Status: "complete",
+	}
+	for _, call := range calls {
+		run.Calls++
+		if len(call.Error) != 0 {
+			run.FailedCalls++
+		}
+		run.InputTokens += call.InputTokens
+		run.CachedInputTokens += call.CachedInputTokens
+		run.CacheWriteInputTokens += call.CacheWriteInputTokens
+		run.OutputTokens += call.OutputTokens
+		run.ReasoningTokens += call.ReasoningTokens
+		run.TotalTokens += call.TotalTokens
+		if call.PricingKnown {
+			run.PricedCalls++
+		} else {
+			run.UnpricedCalls++
+		}
+		run.InputCostNanos += call.InputCostNanos
+		run.CachedCostNanos += call.CachedCostNanos
+		run.CacheWriteCostNanos += call.CacheWriteCostNanos
+		run.OutputCostNanos += call.OutputCostNanos
+		run.CostNanos += call.CostNanos
+		run.DurationMS += call.DurationMS
+		if end := advance(call.StartedAt, call.DurationMS); end != "" {
+			run.EndedAt = end
+		}
+	}
+	if run.FailedCalls > 0 {
+		run.Status = "partial"
+	}
+	run.CostUSD = nanosUSD(run.CostNanos)
+	return run
+}
+
+func advance(startedAt string, durationMS int64) string {
+	at, err := time.Parse(time.RFC3339Nano, startedAt)
+	if err != nil {
+		return ""
+	}
+	return stamp(at.Add(time.Duration(durationMS) * time.Millisecond))
 }
 
 type pricedUsage struct {
@@ -315,13 +323,6 @@ func tokenCostNanos(tokens int, usdPerMillion float64) int64 {
 	return int64(math.Round(float64(tokens) * usdPerMillion * 1000))
 }
 
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
-}
-
 type stableTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
@@ -343,103 +344,6 @@ type recordedResponse struct {
 
 func stableResponse(resp *provider.Response) recordedResponse {
 	return recordedResponse{Blocks: resp.Blocks, Reasoning: resp.Reasoning}
-}
-
-func putObject(tx *sql.Tx, kind string, value any) (string, error) {
-	payload, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	payload = scrub(payload)
-	sum := sha256.Sum256(append(append([]byte(kind), 0), payload...))
-	hash := hex.EncodeToString(sum[:])
-	_, err = tx.Exec(`INSERT INTO objects(hash, kind, payload, size_bytes, created_at)
-		VALUES(?, ?, ?, ?, ?) ON CONFLICT(hash) DO NOTHING`, hash, kind, payload, len(payload), stamp(time.Now().UTC()))
-	return hash, err
-}
-
-func open(dir string) (*sql.DB, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("trace: create directory: %w", err)
-	}
-	path := filepath.Join(dir, "trace.sqlite")
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(8)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("trace: schema: %w", err)
-	}
-	if err := migrateSchema(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("trace: migrate schema: %w", err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("trace: protect ledger: %w", err)
-	}
-	return db, nil
-}
-
-func migrateSchema(db *sql.DB) error {
-	added := false
-	columns := map[string][]string{
-		"runs": {
-			"cache_write_input_tokens INTEGER NOT NULL DEFAULT 0",
-			"reasoning_tokens INTEGER NOT NULL DEFAULT 0",
-			"total_tokens INTEGER NOT NULL DEFAULT 0",
-			"priced_calls INTEGER NOT NULL DEFAULT 0",
-			"unpriced_calls INTEGER NOT NULL DEFAULT 0",
-			"input_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"cached_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"cache_write_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"output_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"cost_nanos INTEGER NOT NULL DEFAULT 0",
-		},
-		"calls": {
-			"cache_write_input_tokens INTEGER NOT NULL DEFAULT 0",
-			"reasoning_tokens INTEGER NOT NULL DEFAULT 0",
-			"total_tokens INTEGER NOT NULL DEFAULT 0",
-			"pricing_known INTEGER NOT NULL DEFAULT 0",
-			"input_price REAL NOT NULL DEFAULT 0",
-			"cached_input_price REAL NOT NULL DEFAULT 0",
-			"cache_write_price REAL NOT NULL DEFAULT 0",
-			"output_price REAL NOT NULL DEFAULT 0",
-			"input_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"cached_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"cache_write_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"output_cost_nanos INTEGER NOT NULL DEFAULT 0",
-			"cost_nanos INTEGER NOT NULL DEFAULT 0",
-		},
-	}
-	for table, definitions := range columns {
-		for _, definition := range definitions {
-			name := strings.Fields(definition)[0]
-			var count int
-			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, name).Scan(&count); err != nil {
-				return err
-			}
-			if count != 0 {
-				continue
-			}
-			if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + definition); err != nil {
-				if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-					return err
-				}
-			} else {
-				added = true
-			}
-		}
-	}
-	if !added {
-		return nil
-	}
-	_, err := db.Exec(`UPDATE runs SET total_tokens = input_tokens + output_tokens WHERE total_tokens = 0 AND (input_tokens != 0 OR output_tokens != 0);
-		UPDATE calls SET total_tokens = input_tokens + output_tokens WHERE total_tokens = 0 AND (input_tokens != 0 OR output_tokens != 0)`)
-	return err
 }
 
 func newRunID(now time.Time) string {
@@ -479,6 +383,8 @@ func truncate(value string, limit int) string {
 }
 
 func stamp(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
+
+func nanosUSD(value int64) float64 { return float64(value) / 1_000_000_000 }
 
 var secretText = regexp.MustCompile(`(?i)(Bearer\s+)[A-Za-z0-9._~+/=-]+|(sk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9._-]{12,}`)
 var secretKey = regexp.MustCompile(`(?i)(authorization|api[_-]?key|secret|password|passwd|token|credential|private[_-]?key|bearer)`)

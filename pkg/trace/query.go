@@ -1,9 +1,10 @@
 package trace
 
 import (
-	"database/sql"
-	"encoding/json"
-	"fmt"
+	"path/filepath"
+	"os"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -69,134 +70,132 @@ type Summary struct {
 	CostNanos             int64   `json:"cost_nanos"`
 	CostUSD               float64 `json:"cost_usd"`
 	DurationMS            int64   `json:"duration_ms"`
-	UniqueObjects         int     `json:"unique_objects"`
-	ObjectBytes           int64   `json:"object_bytes"`
+	StoredRuns            int     `json:"stored_runs"`
+	StoredBytes           int64   `json:"stored_bytes"`
 }
 
-const runColumns = `id, run_date, started_at, ended_at, provider, model,
-	task_id, task_label, status, calls, failed_calls, input_tokens,
-	cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_tokens,
-	total_tokens, priced_calls, unpriced_calls, input_cost_nanos, cached_cost_nanos,
-	cache_write_cost_nanos, output_cost_nanos, cost_nanos, duration_ms`
+// runFiles lists the rollout files in a trace directory.
+func runFiles(dir string) ([]string, error) {
+	return filepath.Glob(filepath.Join(dir, "*.jsonl"))
+}
 
-func scanRun(scanner interface{ Scan(...any) error }) (Run, error) {
-	var run Run
-	err := scanner.Scan(&run.ID, &run.Date, &run.StartedAt, &run.EndedAt,
-		&run.Provider, &run.Model, &run.TaskID, &run.TaskLabel, &run.Status,
-		&run.Calls, &run.FailedCalls, &run.InputTokens, &run.CachedInputTokens,
-		&run.CacheWriteInputTokens, &run.OutputTokens, &run.ReasoningTokens,
-		&run.TotalTokens, &run.PricedCalls, &run.UnpricedCalls, &run.InputCostNanos,
-		&run.CachedCostNanos, &run.CacheWriteCostNanos, &run.OutputCostNanos,
-		&run.CostNanos, &run.DurationMS)
-	run.CostUSD = nanosUSD(run.CostNanos)
-	return run, err
+// scanAll reads every rollout in a directory into its cumulative row, dropping
+// any file that does not decode as a rollout (a foreign .jsonl, or an empty one
+// with no header). It is the single fold every query shares.
+func scanAll(dir string, filter Filter) ([]Run, error) {
+	paths, err := runFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []Run
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		header, calls, err := scanRun(file)
+		file.Close()
+		if err != nil {
+			continue
+		}
+		run := foldRun(header, calls)
+		if run.ID == "" {
+			continue
+		}
+		if !matchFilter(run, filter) {
+			continue
+		}
+		out = append(out, run)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
+	return out, nil
+}
+
+func matchFilter(run Run, filter Filter) bool {
+	if filter.Model != "" && run.Model != filter.Model {
+		return false
+	}
+	if filter.Provider != "" && run.Provider != filter.Provider {
+		return false
+	}
+	if filter.Task != "" && run.TaskID != filter.Task && !strings.Contains(run.TaskLabel, filter.Task) {
+		return false
+	}
+	if filter.Date != "" && run.Date != filter.Date {
+		return false
+	}
+	if !filter.Since.IsZero() && run.StartedAt < stamp(filter.Since) {
+		return false
+	}
+	return true
 }
 
 // List returns matching runs newest first.
 func List(dir string, filter Filter) ([]Run, error) {
-	db, err := open(dir)
+	runs, err := scanAll(dir, filter)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
-	where, args := filterSQL(filter)
 	limit := filter.Limit
 	if limit == 0 {
 		limit = 50
 	}
-	query := `SELECT ` + runColumns + ` FROM runs ` + where + ` ORDER BY started_at DESC`
-	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
+	if limit > 0 && len(runs) > limit {
+		runs = runs[:limit]
 	}
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Run
-	for rows.Next() {
-		run, err := scanRun(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, run)
-	}
-	return out, rows.Err()
+	return runs, nil
 }
 
 // Summarize returns compact capability and efficiency totals for matching runs.
 func Summarize(dir string, filter Filter) (Summary, error) {
-	db, err := open(dir)
+	filter.Limit = -1
+	runs, err := scanAll(dir, filter)
 	if err != nil {
 		return Summary{}, err
 	}
-	defer db.Close()
-	where, args := filterSQL(filter)
 	var out Summary
-	err = db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(calls),0), COALESCE(SUM(failed_calls),0),
-		COUNT(DISTINCT model), COUNT(DISTINCT task_id), COALESCE(SUM(input_tokens),0),
-		COALESCE(SUM(cached_input_tokens),0), COALESCE(SUM(cache_write_input_tokens),0),
-		COALESCE(SUM(output_tokens),0), COALESCE(SUM(reasoning_tokens),0), COALESCE(SUM(total_tokens),0),
-		COALESCE(SUM(priced_calls),0), COALESCE(SUM(unpriced_calls),0),
-		COALESCE(SUM(input_cost_nanos),0), COALESCE(SUM(cached_cost_nanos),0),
-		COALESCE(SUM(cache_write_cost_nanos),0), COALESCE(SUM(output_cost_nanos),0),
-		COALESCE(SUM(cost_nanos),0), COALESCE(SUM(duration_ms),0) FROM runs `+where, args...).Scan(
-		&out.Runs, &out.Calls, &out.FailedCalls, &out.Models, &out.Tasks,
-		&out.InputTokens, &out.CachedInputTokens, &out.CacheWriteInputTokens,
-		&out.OutputTokens, &out.ReasoningTokens, &out.TotalTokens, &out.PricedCalls,
-		&out.UnpricedCalls, &out.InputCostNanos, &out.CachedCostNanos,
-		&out.CacheWriteCostNanos, &out.OutputCostNanos, &out.CostNanos, &out.DurationMS)
-	if err != nil {
-		return Summary{}, err
+	models := map[string]struct{}{}
+	tasks := map[string]struct{}{}
+	for _, run := range runs {
+		out.Runs++
+		out.Calls += run.Calls
+		out.FailedCalls += run.FailedCalls
+		models[run.Model] = struct{}{}
+		tasks[run.TaskID] = struct{}{}
+		out.InputTokens += int64(run.InputTokens)
+		out.CachedInputTokens += int64(run.CachedInputTokens)
+		out.CacheWriteInputTokens += int64(run.CacheWriteInputTokens)
+		out.OutputTokens += int64(run.OutputTokens)
+		out.ReasoningTokens += int64(run.ReasoningTokens)
+		out.TotalTokens += int64(run.TotalTokens)
+		out.PricedCalls += int64(run.PricedCalls)
+		out.UnpricedCalls += int64(run.UnpricedCalls)
+		out.InputCostNanos += run.InputCostNanos
+		out.CachedCostNanos += run.CachedCostNanos
+		out.CacheWriteCostNanos += run.CacheWriteCostNanos
+		out.OutputCostNanos += run.OutputCostNanos
+		out.CostNanos += run.CostNanos
+		out.DurationMS += run.DurationMS
 	}
-	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(size_bytes),0) FROM objects`).Scan(&out.UniqueObjects, &out.ObjectBytes); err != nil {
-		return Summary{}, err
-	}
+	out.Models = len(models)
+	out.Tasks = len(tasks)
 	out.CostUSD = nanosUSD(out.CostNanos)
+	out.StoredRuns = out.Runs
+	if paths, err := runFiles(dir); err == nil {
+		for _, path := range paths {
+			if info, err := os.Stat(path); err == nil {
+				out.StoredBytes += info.Size()
+			}
+		}
+	}
 	return out, nil
 }
 
-func filterSQL(filter Filter) (string, []any) {
-	where := "WHERE 1=1"
-	var args []any
-	add := func(clause string, value any) {
-		where += " AND " + clause
-		args = append(args, value)
+// loadRun returns one run's cumulative row by id.
+func loadRun(dir, id string) (Run, error) {
+	header, calls, err := readRun(dir, id)
+	if err != nil {
+		return Run{}, err
 	}
-	if filter.Model != "" {
-		add("model = ?", filter.Model)
-	}
-	if filter.Provider != "" {
-		add("provider = ?", filter.Provider)
-	}
-	if filter.Task != "" {
-		add("(task_id = ? OR task_label LIKE '%' || ? || '%')", filter.Task)
-		args = append(args, filter.Task)
-	}
-	if filter.Date != "" {
-		add("run_date = ?", filter.Date)
-	}
-	if !filter.Since.IsZero() {
-		add("started_at >= ?", stamp(filter.Since))
-	}
-	return where, args
+	return foldRun(header, calls), nil
 }
-
-func loadRun(db *sql.DB, id string) (Run, error) {
-	run, err := scanRun(db.QueryRow(`SELECT `+runColumns+` FROM runs WHERE id = ?`, id))
-	if err == sql.ErrNoRows {
-		return Run{}, fmt.Errorf("trace run %q not found", id)
-	}
-	return run, err
-}
-
-func object(db *sql.DB, hash string) (json.RawMessage, error) {
-	var payload []byte
-	if err := db.QueryRow(`SELECT payload FROM objects WHERE hash = ?`, hash).Scan(&payload); err != nil {
-		return nil, fmt.Errorf("trace object %s: %w", hash, err)
-	}
-	return json.RawMessage(payload), nil
-}
-
-func nanosUSD(value int64) float64 { return float64(value) / 1_000_000_000 }

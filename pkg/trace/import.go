@@ -2,8 +2,8 @@ package trace
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/tamnd/tomo/pkg/provider"
@@ -36,9 +36,9 @@ type ImportResult struct {
 	AlreadyComplete bool
 }
 
-// ImportHistoricalRun inserts a reconstructed session into the normalized
-// ledger. Existing call sequences are skipped, which makes the operation safe
-// to resume after interruption.
+// ImportHistoricalRun appends a reconstructed session to the rollout store.
+// Call sequences already present in the run's file are skipped, which makes the
+// operation safe to resume after interruption.
 func ImportHistoricalRun(ctx context.Context, dir string, run ImportRun) (ImportResult, error) {
 	if run.ID == "" {
 		return ImportResult{}, fmt.Errorf("trace import: run ID is empty")
@@ -46,36 +46,35 @@ func ImportHistoricalRun(ctx context.Context, dir string, run ImportRun) (Import
 	if run.StartedAt.IsZero() {
 		return ImportResult{}, fmt.Errorf("trace import %s: start time is empty", run.ID)
 	}
-	db, err := open(dir)
-	if err != nil {
-		return ImportResult{}, err
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return ImportResult{}, fmt.Errorf("trace import: create directory: %w", err)
 	}
-	defer db.Close()
-	result := ImportResult{RunID: run.ID}
-	var existing int
-	err = db.QueryRowContext(ctx, `SELECT calls FROM runs WHERE id = ?`, run.ID).Scan(&existing)
-	if err != nil && err != sql.ErrNoRows {
-		return result, err
+	present := map[int64]struct{}{}
+	if _, calls, err := readRun(dir, run.ID); err == nil {
+		for _, call := range calls {
+			present[call.Sequence] = struct{}{}
+		}
 	}
-	result.ExistingCalls = existing
-	if existing == len(run.Calls) && existing != 0 {
+	result := ImportResult{RunID: run.ID, ExistingCalls: len(present)}
+	if len(present) == len(run.Calls) && len(present) != 0 {
 		result.AlreadyComplete = true
 		return result, nil
 	}
+	file, err := os.OpenFile(runPath(dir, run.ID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return result, fmt.Errorf("trace import: open run log: %w", err)
+	}
+	defer file.Close()
 	tracer := &tracedProvider{
 		opts:  Options{Dir: dir, Provider: run.Provider, Pricing: run.Pricing},
-		runID: run.ID, started: run.StartedAt.UTC(), db: db,
+		runID: run.ID, started: run.StartedAt.UTC(), file: file, wroteHeader: len(present) > 0,
 	}
 	for index, call := range run.Calls {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
 		sequence := int64(index + 1)
-		var present int
-		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM calls WHERE run_id = ? AND sequence = ?`, run.ID, sequence).Scan(&present); err != nil {
-			return result, err
-		}
-		if present != 0 {
+		if _, ok := present[sequence]; ok {
 			continue
 		}
 		started := call.StartedAt.UTC()
