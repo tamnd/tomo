@@ -77,16 +77,11 @@ type stsHeader struct {
 // ExportSTS writes Hugging Face Session Trace Simple Format JSONL. The first
 // line is the session header and every later line is one logical message.
 func ExportSTS(dir, runID, output string) error {
-	db, err := open(dir)
+	run, err := loadRun(dir, runID)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	run, err := loadRun(db, runID)
-	if err != nil {
-		return err
-	}
-	calls, err := loadCalls(db, runID)
+	calls, err := loadCalls(dir, runID)
 	if err != nil {
 		return err
 	}

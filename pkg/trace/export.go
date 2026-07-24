@@ -1,9 +1,7 @@
 package trace
 
 import (
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -36,109 +34,10 @@ type callRecord struct {
 	CostUSD               float64            `json:"cost_usd"`
 }
 
-type callRow struct {
-	record                                       callRecord
-	id                                           int64
-	systemHash, toolsHash, responseHash, errHash string
-}
-
-func loadCalls(db *sql.DB, runID string) ([]callRecord, error) {
-	rows, err := db.Query(`SELECT id, sequence, started_at, duration_ms, system_hash,
-		tools_hash, response_hash, error_hash, stop_reason, input_tokens,
-		cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_tokens,
-		total_tokens, pricing_known, input_price, cached_input_price, cache_write_price,
-		output_price, input_cost_nanos, cached_cost_nanos, cache_write_cost_nanos,
-		output_cost_nanos, cost_nanos FROM calls WHERE run_id = ? ORDER BY sequence`, runID)
-	if err != nil {
-		return nil, err
-	}
-	var raw []callRow
-	for rows.Next() {
-		var item callRow
-		if err := rows.Scan(&item.id, &item.record.Sequence, &item.record.StartedAt,
-			&item.record.DurationMS, &item.systemHash, &item.toolsHash,
-			&item.responseHash, &item.errHash, &item.record.StopReason,
-			&item.record.InputTokens, &item.record.CachedInputTokens,
-			&item.record.CacheWriteInputTokens, &item.record.OutputTokens,
-			&item.record.ReasoningTokens, &item.record.TotalTokens,
-			&item.record.PricingKnown, &item.record.Pricing.InputUSDPerMillion,
-			&item.record.Pricing.CachedUSDPerMillion,
-			&item.record.Pricing.CacheWriteUSDPerMillion,
-			&item.record.Pricing.OutputUSDPerMillion, &item.record.InputCostNanos,
-			&item.record.CachedCostNanos, &item.record.CacheWriteCostNanos,
-			&item.record.OutputCostNanos, &item.record.CostNanos); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		raw = append(raw, item)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	out := make([]callRecord, 0, len(raw))
-	for _, item := range raw {
-		if err := decodeObject(db, item.systemHash, &item.record.System); err != nil {
-			return nil, err
-		}
-		if err := decodeObject(db, item.toolsHash, &item.record.Tools); err != nil {
-			return nil, err
-		}
-		if item.responseHash != "" {
-			var response recordedResponse
-			if err := decodeObject(db, item.responseHash, &response); err != nil {
-				return nil, err
-			}
-			item.record.Response = &response
-		}
-		if item.errHash != "" {
-			payload, err := object(db, item.errHash)
-			if err != nil {
-				return nil, err
-			}
-			item.record.Error = payload
-		}
-		messageRows, err := db.Query(`SELECT object_hash FROM call_messages WHERE call_id = ? ORDER BY position`, item.id)
-		if err != nil {
-			return nil, err
-		}
-		var hashes []string
-		for messageRows.Next() {
-			var hash string
-			if err := messageRows.Scan(&hash); err != nil {
-				messageRows.Close()
-				return nil, err
-			}
-			hashes = append(hashes, hash)
-		}
-		if err := messageRows.Close(); err != nil {
-			return nil, err
-		}
-		for _, hash := range hashes {
-			var message provider.Message
-			if err := decodeObject(db, hash, &message); err != nil {
-				return nil, err
-			}
-			item.record.Messages = append(item.record.Messages, message)
-		}
-		item.record.CostUSD = nanosUSD(item.record.CostNanos)
-		out = append(out, item.record)
-	}
-	return out, nil
-}
-
-func decodeObject(db *sql.DB, hash string, target any) error {
-	payload, err := object(db, hash)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(payload, target); err != nil {
-		return fmt.Errorf("trace object %s: %w", hash, err)
-	}
-	return nil
+// loadCalls reads a run's calls from its rollout, in the order they were made.
+func loadCalls(dir, runID string) ([]callRecord, error) {
+	_, calls, err := readRun(dir, runID)
+	return calls, err
 }
 
 func writeExport(output string, payload []byte) error {

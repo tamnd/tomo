@@ -108,22 +108,37 @@ func newTraceExportCmd() *cobra.Command {
 	var output string
 	var format string
 	cmd := &cobra.Command{
-		Use:   "export RUN_ID",
+		Use:   "export [RUN_ID]",
 		Short: "Export one run as Hugging Face STS JSONL or native JSON",
-		Args:  cobra.ExactArgs(1),
+		Long: "export writes one run's trace. With no RUN_ID it exports the most\n" +
+			"recent run, which is what a harness wants right after a one-shot finishes.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(cmd)
 			if err != nil {
 				return err
+			}
+			runID := ""
+			if len(args) == 1 {
+				runID = args[0]
+			} else {
+				runs, err := trace.List(cfg.Tracing.Dir, trace.Filter{Limit: 1})
+				if err != nil {
+					return err
+				}
+				if len(runs) == 0 {
+					return fmt.Errorf("no runs to export in %s", cfg.Tracing.Dir)
+				}
+				runID = runs[0].ID
 			}
 			if output == "" {
 				output = "-"
 			}
 			switch format {
 			case "sts", "hf", "huggingface":
-				return trace.ExportSTS(cfg.Tracing.Dir, args[0], output)
+				return trace.ExportSTS(cfg.Tracing.Dir, runID, output)
 			case "native":
-				return trace.ExportNative(cfg.Tracing.Dir, args[0], output)
+				return trace.ExportNative(cfg.Tracing.Dir, runID, output)
 			default:
 				return fmt.Errorf("unknown trace format %q: want sts or native", format)
 			}
@@ -162,7 +177,7 @@ func runTraceSummaryWith(cmd *cobra.Command, filter trace.Filter, jsonOutput boo
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "model time: %s\n", time.Duration(summary.DurationMS)*time.Millisecond)
-	fmt.Fprintf(out, "deduplicated objects: %d, stored bytes: %d\n", summary.UniqueObjects, summary.ObjectBytes)
+	fmt.Fprintf(out, "stored runs: %d, stored bytes: %d\n", summary.StoredRuns, summary.StoredBytes)
 	return nil
 }
 

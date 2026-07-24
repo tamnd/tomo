@@ -54,10 +54,9 @@ func TestTraceDeduplicatesRepeatedContentAndIndexesRun(t *testing.T) {
 	if summary.Runs != 1 || summary.Calls != 2 || summary.InputTokens != 200 || summary.CachedInputTokens != 160 || summary.OutputTokens != 40 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	// system, tool set, user message, and response blocks. The second call
-	// references exactly the same four objects instead of storing them again.
-	if summary.UniqueObjects != 4 {
-		t.Fatalf("unique objects = %d, want 4", summary.UniqueObjects)
+	// Both calls land in the one run's rollout, so the store holds a single file.
+	if summary.StoredRuns != 1 || summary.StoredBytes == 0 {
+		t.Fatalf("stored accounting = %+v", summary)
 	}
 	runs, err := List(dir, Filter{Model: "model-free", Task: "recurrence"})
 	if err != nil {
@@ -66,12 +65,12 @@ func TestTraceDeduplicatesRepeatedContentAndIndexesRun(t *testing.T) {
 	if len(runs) != 1 || runs[0].Provider != "zen" || runs[0].TaskID == "" || runs[0].Status != "complete" {
 		t.Fatalf("runs = %+v", runs)
 	}
-	mode, err := os.Stat(filepath.Join(dir, "trace.sqlite"))
+	mode, err := os.Stat(filepath.Join(dir, runs[0].ID+".jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode.Mode().Perm() != 0o600 {
-		t.Fatalf("ledger mode = %o, want 600", mode.Mode().Perm())
+		t.Fatalf("rollout mode = %o, want 600", mode.Mode().Perm())
 	}
 }
 

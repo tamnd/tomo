@@ -4,16 +4,11 @@ import "encoding/json"
 
 // ExportNative resolves one normalized run into tomo's lossless JSON shape.
 func ExportNative(dir, runID, output string) error {
-	db, err := open(dir)
+	run, err := loadRun(dir, runID)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	run, err := loadRun(db, runID)
-	if err != nil {
-		return err
-	}
-	calls, err := loadCalls(db, runID)
+	calls, err := loadCalls(dir, runID)
 	if err != nil {
 		return err
 	}
