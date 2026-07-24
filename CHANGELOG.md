@@ -4,6 +4,45 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+## v0.2.11
+
+A finish-side guard for the oi engine: a fix that turns its own reproduction green
+but breaks tests that were passing before the turn is not done.
+
+### Added
+
+- The oi engine gains a regression guard, armed with `TOMO_OI_REGRESS=1`. Before the
+  loop it records the project's currently-passing tests, and a turn that edited the
+  tree cannot end while any of those now fails: at each finish attempt it re-runs the
+  suite and refuses the ending, naming the broken tests, when the fix regressed any of
+  them. It is the signal the reproduction gate does not give, which only proves the
+  reported bug is fixed, not that working behavior still works. It runs the project's
+  own existing tests, never a hidden grading suite, and ignores any authored scratch
+  reproduction, so it stays general and untailored. Off by default so it can be A/B'd,
+  and bounded by a firing cap so a run still terminates.
+
+## v0.2.10
+
+A canonical trace store, and the harness authoring a task's reproduction test.
+
+### Changed
+
+- The trace store is now one append-only JSONL rollout per run instead of a WAL-mode
+  SQLite database. One process owns one file and only appends, so there is no lock and
+  no sidecar to lose, which is what an earlier container copy did to the SQLite `-wal`,
+  publishing empty traces. The file is the publishable artifact directly. `traces
+  export [RUN_ID]` (no argument exports the newest run) writes it as STS.
+
+### Added
+
+- The oi engine gains a test-authoring sub-flow, armed with `TOMO_OI_TESTGEN=1`. Before
+  the loop it makes one call over the issue text alone, writes the returned test into
+  the workspace, smoke-checks that it collects, and arms the reproduction gate so the
+  model must make the already-failing test pass. It targets the failure the example
+  gate left open, where a cheap model told to write the test skips it and drifts to the
+  easiest item. It reads the issue alone and names no file or symbol from it, and
+  supersedes the example gate rather than stacking with it.
+
 ## v0.2.9
 
 Sharper tools for real codebases: a code search primitive, a surgical file edit,
