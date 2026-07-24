@@ -19,6 +19,7 @@ import (
 	"github.com/tamnd/tomo/pkg/curator"
 	"github.com/tamnd/tomo/pkg/engine/cx"
 	"github.com/tamnd/tomo/pkg/engine/kata"
+	"github.com/tamnd/tomo/pkg/engine/mini"
 	"github.com/tamnd/tomo/pkg/engine/oi"
 	"github.com/tamnd/tomo/pkg/memory"
 	"github.com/tamnd/tomo/pkg/policy"
@@ -139,7 +140,7 @@ func runPrompt(cmd *cobra.Command, model, prompt string) error {
 // run under, and which memory and skills dirs to read. The zero value plus a
 // model spec builds the default worker against the top-level dirs.
 type agentBuild struct {
-	engine    string // "agent" (default), "cx", "cx-offline", "oi", or "kata"; empty means the default engine
+	engine    string // "agent" (default), "cx", "cx-offline", "oi", "kata", or "mini"; empty means the default engine
 	persona   string // extra system-prompt lines, empty for the default worker
 	model     string // provider/model spec, empty means the config default
 	memoryDir string // empty means <data>/memory
@@ -204,7 +205,8 @@ func compactFromEnv() compactSettings {
 
 // buildLoop builds whichever engine the spec selects: the default agent, the
 // codex-style cx engine when b.engine is "cx", the Open Interpreter oi engine
-// when it is "oi", or the kata engine when it is "kata". All are returned
+// when it is "oi", the kata engine when it is "kata", or the mini-swe-agent
+// port when it is "mini". All are returned
 // through the engine interface, so the chat REPL and the one-shot prompt path
 // drive any of them the same way. Every other caller (serve's workforce, plan
 // run, the MCP server) stays on buildAgent and the concrete *agent.Agent it
@@ -318,6 +320,30 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 			e.Decompose = true
 		}
 		return e, parts.label + " · oi", nil
+	}
+	if b.engine == "mini" {
+		parts, err := resolveParts(cfg, b, extra...)
+		if err != nil {
+			return nil, "", err
+		}
+		e := &mini.Engine{
+			Provider:  parts.provider,
+			Model:     parts.modelID,
+			System:    mini.SystemPrompt(),
+			Box:       parts.box,
+			Gate:      guard,
+			Workspace: parts.workspace,
+		}
+		// TOMO_MINI_MAX_STEPS bounds the model calls in one run, mini's
+		// step_limit; zero or unset is unbounded, which is mini's default.
+		if v, err := strconv.Atoi(os.Getenv("TOMO_MINI_MAX_STEPS")); err == nil {
+			e.MaxSteps = v
+		}
+		// TOMO_MINI_TIMEOUT is the per-command kill limit in seconds.
+		if v, err := strconv.Atoi(os.Getenv("TOMO_MINI_TIMEOUT")); err == nil && v > 0 {
+			e.Timeout = time.Duration(v) * time.Second
+		}
+		return e, parts.label + " · mini", nil
 	}
 	if b.engine == "kata" {
 		parts, err := resolveParts(cfg, b, extra...)
