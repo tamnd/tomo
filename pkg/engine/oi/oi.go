@@ -63,6 +63,11 @@ type Engine struct {
 	// the model must reproduce the reported bug as a failing test before its fix
 	// turns it green. Off by default so it can be A/B'd against the plain exec gate.
 	Repro bool
+	// Examples arms the issue-example gate (examples.go): before the loop a focused
+	// call distills the issue into a checklist of concrete cases, injected as
+	// required red-to-green targets, and the reproduction gate is armed with it so a
+	// finish is held to a real red-to-green. Off by default so it can be A/B'd.
+	Examples bool
 }
 
 // maxCallRetries is how many extra times a single model call is retried on a
@@ -99,6 +104,19 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	if pack := e.contextPack(assistantText(user.Blocks)); pack != "" {
 		turn = append(turn, provider.UserText(pack))
 	}
+	// Issue-example gate (examples.go): a focused pre-loop call distills the issue
+	// into a checklist of concrete cases, injected as required red-to-green targets.
+	// It arms the reproduction gate with itself (repro below) so the red-to-green
+	// discipline backs the checklist. Empty when extraction finds no concrete case,
+	// so a run that cannot use it pays only the one call and the loop is unchanged.
+	if e.Examples {
+		if msg := examplesMessage(e.extractExamples(ctx, assistantText(user.Blocks))); msg != "" {
+			turn = append(turn, provider.UserText(msg))
+		}
+	}
+	// The reproduction gate is armed directly or by the issue-example gate, which
+	// depends on the same red-to-green finish discipline.
+	repro := e.Repro || e.Examples
 	continues := 0
 	round := 0
 	// The dialect is chosen from the model: how this model natively writes an
@@ -239,7 +257,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 			// push it to write a failing reproduction first, bounded by reproLimit so a
 			// stuck run still terminates. Ordered after the exec gate so a run reaches
 			// this only once some executing check has passed.
-			if e.Repro && edited && !verifyFailed && !reproRed && reproNudges < reproLimit {
+			if repro && edited && !verifyFailed && !reproRed && reproNudges < reproLimit {
 				reproNudges++
 				turn = append(turn, provider.UserText(reproNudge))
 				continue
@@ -326,7 +344,7 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 		// When the reproduction gate is armed, the green verification must also have
 		// been preceded by a red one this turn, so a fix that was green from the start
 		// does not shortcut the finish without ever reproducing the bug.
-		if roundWrote && roundVerified && !verifyFailed && (!e.ExecGate || lastCheckExec) && (!e.Repro || reproRed) {
+		if roundWrote && roundVerified && !verifyFailed && (!e.ExecGate || lastCheckExec) && (!repro || reproRed) {
 			turn = append(turn, provider.Message{Role: provider.RoleUser, Blocks: results})
 			return turn, nil
 		}
