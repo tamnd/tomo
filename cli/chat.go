@@ -264,6 +264,18 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 			e.ExecGate = true
 			e.System = e.System + "\n\n" + oi.ScopeDirective
 		}
+		// TOMO_OI_EXAMPLES=1 arms the issue-example gate (examples.go): a focused
+		// pre-loop call distills the issue into a checklist of concrete cases,
+		// injected as required red-to-green targets, and the reproduction gate is
+		// armed with it. It targets the reasoning-ceiling failure mode measured on
+		// dynaconf-1225, where the model edited the graded functions but fixed only
+		// the one case it tried; the enumerated checklist makes every case the issue
+		// states a required target rather than one of the model's choosing. It reads
+		// the issue text alone, never the workspace or hidden tests, so it stays
+		// general and untailored.
+		if os.Getenv("TOMO_OI_EXAMPLES") == "1" {
+			e.Examples = true
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {

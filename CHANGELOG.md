@@ -26,6 +26,13 @@ without drowning its own context.
   overrides an explicit `deny` rule, only the asks. `--dangerously-skip-permissions`
   is a hidden alias for anyone reaching for the name Claude Code uses. Without it,
   a headless `tomo -p` run still declines what it cannot ask a human about.
+- The oi engine gains an issue-example gate, armed with `TOMO_OI_EXAMPLES=1`. Before
+  the loop it makes one focused call that distills the task's issue into a checklist
+  of the concrete cases the issue itself states, then injects them as required
+  red-to-green targets and holds the finish to a real red-to-green. It converts a
+  vague multi-behavior issue into a per-case contract the model cannot satisfy by
+  fixing only the one case it happened to try. It reads the issue text alone, never
+  the workspace or any hidden test, and is off by default so it can be A/B'd.
 
 ### Changed
 
