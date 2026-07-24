@@ -4,6 +4,8 @@ All notable changes to tomo are recorded here.
 
 ## Unreleased
 
+## v0.2.9
+
 Sharper tools for real codebases: a code search primitive, a surgical file edit,
 and hard caps on how much any tool can hand back, so the agent works a large repo
 without drowning its own context.
