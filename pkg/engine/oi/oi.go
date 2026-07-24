@@ -68,6 +68,13 @@ type Engine struct {
 	// required red-to-green targets, and the reproduction gate is armed with it so a
 	// finish is held to a real red-to-green. Off by default so it can be A/B'd.
 	Examples bool
+	// TestGen arms the test-authoring sub-flow (testgen.go): before the loop a
+	// focused call authors a reproduction test file from the issue, the harness
+	// writes it into the workspace and smoke-checks that it collects, and the
+	// reproduction gate is armed so the model must make the already-failing tests
+	// pass. It supersedes the example gate rather than stacking with it, so the run
+	// pays one authoring call. Off by default so it can be A/B'd.
+	TestGen bool
 }
 
 // maxCallRetries is how many extra times a single model call is retried on a
@@ -109,14 +116,28 @@ func (e *Engine) Turn(ctx context.Context, history []provider.Message, user prov
 	// It arms the reproduction gate with itself (repro below) so the red-to-green
 	// discipline backs the checklist. Empty when extraction finds no concrete case,
 	// so a run that cannot use it pays only the one call and the loop is unchanged.
+	// Test-authoring sub-flow (testgen.go): the harness itself authors a reproduction
+	// test file from the issue and writes it into the workspace, so a failing target
+	// exists from round zero even when the model would skip writing one. It supersedes
+	// the example gate, so it runs only when the example gate does not, and both arm
+	// the reproduction gate. testGenArmed records whether it wrote a usable file, so
+	// the gate is armed only when there is a real red-to-green target on disk.
+	testGenArmed := false
+	if e.TestGen && !e.Examples {
+		if msg, armed := e.writeReproTests(ctx, assistantText(user.Blocks), sink); armed {
+			turn = append(turn, provider.UserText(msg))
+			testGenArmed = armed
+		}
+	}
 	if e.Examples {
 		if msg := examplesMessage(e.extractExamples(ctx, assistantText(user.Blocks))); msg != "" {
 			turn = append(turn, provider.UserText(msg))
 		}
 	}
-	// The reproduction gate is armed directly or by the issue-example gate, which
-	// depends on the same red-to-green finish discipline.
-	repro := e.Repro || e.Examples
+	// The reproduction gate is armed directly, by the issue-example gate, or by the
+	// test-authoring sub-flow, all of which depend on the same red-to-green finish
+	// discipline.
+	repro := e.Repro || e.Examples || testGenArmed
 	continues := 0
 	round := 0
 	// The dialect is chosen from the model: how this model natively writes an

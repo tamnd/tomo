@@ -286,6 +286,17 @@ func buildLoop(cfg *config.Config, b agentBuild, guard agent.Gate, extra ...tool
 		if os.Getenv("TOMO_OI_FOCUS") == "1" {
 			e.System = e.System + "\n\n" + oi.FocusDirective
 		}
+		// TOMO_OI_TESTGEN=1 arms the test-authoring sub-flow (testgen.go): before the
+		// loop the harness authors a reproduction test file from the issue, writes it
+		// into the workspace, smoke-checks that it collects, and arms the reproduction
+		// gate so the model must make the already-failing tests pass. It targets the
+		// failure the example gate left open, where a cheap model told to write the test
+		// skips it and drifts to the easiest item; the harness writing the test makes it
+		// exist regardless. It supersedes the example gate, reads the issue text alone,
+		// and names no file or symbol from the issue, so it stays general and untailored.
+		if os.Getenv("TOMO_OI_TESTGEN") == "1" {
+			e.TestGen = true
+		}
 		return e, parts.label + " · oi", nil
 	}
 	if b.engine == "kata" {
